@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -66,3 +67,10 @@ class EngrateCostSensor(CoordinatorEntity[EngrateCoordinator], SensorEntity):
         if self.coordinator.data is None:
             return None
         return self._value_fn(self.coordinator.data)
+
+    @property
+    def last_reset(self) -> datetime | None:
+        """Return the start of the current calculation period (year start)."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.period_start

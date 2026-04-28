@@ -1,7 +1,8 @@
 """Common fixtures for the Engrate tests."""
 
 from collections.abc import Generator
-from unittest.mock import AsyncMock, patch
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -215,3 +216,67 @@ def mock_engrate_client() -> Generator[AsyncMock]:
         client.async_resolve_system_operator = AsyncMock(return_value=MOCK_PARTY)
         client.async_calculate_tariff = AsyncMock(return_value=MOCK_CALCULATE_RESPONSE)
         yield client
+
+
+def make_recorder_stats(
+    entity_id: str,
+    hourly_data: list[dict],
+) -> dict[str, list[dict]]:
+    """Build a statistics_during_period return value for an entity.
+
+    Each item in hourly_data should be a dict with 'start' (epoch float)
+    and optionally 'change' and/or 'mean'.
+    """
+    return {entity_id: hourly_data}
+
+
+@pytest.fixture
+def mock_recorder() -> Generator[MagicMock]:
+    """Mock recorder get_instance and statistics_during_period."""
+    with (
+        patch(
+            "homeassistant.components.engrate.coordinator.get_instance"
+        ) as mock_get_instance,
+        patch(
+            "homeassistant.components.engrate.coordinator.statistics_during_period"
+        ) as mock_stats,
+    ):
+        # Make async_add_executor_job call the function synchronously
+        recorder_instance = MagicMock()
+
+        async def _run_sync(func, *args):
+            return func(*args)
+
+        recorder_instance.async_add_executor_job = _run_sync
+        mock_get_instance.return_value = recorder_instance
+
+        # Default: no stats
+        mock_stats.return_value = {}
+        yield mock_stats
+
+
+MOCK_HOURLY_STATS_ENERGY = [
+    {
+        "start": datetime(2026, 1, 1, 0, 0).timestamp(),
+        "change": 10.0,
+        "mean": None,
+    },
+    {
+        "start": datetime(2026, 1, 1, 1, 0).timestamp(),
+        "change": 10.0,
+        "mean": None,
+    },
+]
+
+MOCK_HOURLY_STATS_PRICE = [
+    {
+        "start": datetime(2026, 1, 1, 0, 0).timestamp(),
+        "change": None,
+        "mean": 0.50,
+    },
+    {
+        "start": datetime(2026, 1, 1, 1, 0).timestamp(),
+        "change": None,
+        "mean": 0.50,
+    },
+]

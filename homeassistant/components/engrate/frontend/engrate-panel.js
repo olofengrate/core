@@ -136,6 +136,34 @@ class EngratePanel extends HTMLElement {
           word-break: break-word;
           color: var(--primary-text-color, #212121);
         }
+        .cost-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 0;
+          border-bottom: 1px solid var(--divider-color, #e0e0e0);
+        }
+        .cost-row.total {
+          font-weight: 600;
+          border-bottom: none;
+          padding-top: 12px;
+        }
+        .cost-label {
+          color: var(--secondary-text-color, #727272);
+        }
+        .cost-value {
+          font-weight: 500;
+        }
+        .period {
+          font-size: 14px;
+          color: var(--secondary-text-color, #727272);
+          margin-bottom: 12px;
+        }
+        .last-updated {
+          font-size: 12px;
+          color: var(--secondary-text-color, #727272);
+          margin-top: 12px;
+          text-align: right;
+        }
       </style>
       <div class="container">
         <div class="header">
@@ -154,6 +182,23 @@ class EngratePanel extends HTMLElement {
           ${data.tariff_annotations ? `<p><em>${this._escapeHtml(data.tariff_annotations)}</em></p>` : ""}
           <button class="toggle-btn" id="toggle-json">Show tariff JSON</button>
           <pre class="json-block" id="tariff-json" style="display:none">${this._escapeHtml(JSON.stringify(data.tariff_raw, null, 2))}</pre>
+        </div>
+        <div class="card">
+          <div class="label">Yearly Costs</div>
+          <div class="period">${this._formatPeriod(data.period_start, data.period_end)}</div>
+          <div class="cost-row">
+            <span class="cost-label">Grid cost</span>
+            <span class="cost-value">${this._formatCost(data.grid_cost)}</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-label">Energy cost</span>
+            <span class="cost-value">${this._formatCost(data.energy_cost)}</span>
+          </div>
+          <div class="cost-row total">
+            <span class="cost-label">Total cost</span>
+            <span class="cost-value">${this._formatCost(data.total_cost)}</span>
+          </div>
+          ${data.last_calculated ? `<div class="last-updated">Last calculated: ${this._formatDate(data.last_calculated)}</div>` : ""}
         </div>
       </div>
     `;
@@ -204,6 +249,38 @@ class EngratePanel extends HTMLElement {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  _formatCost(value) {
+    if (value == null) return "—";
+    return value.toFixed(2) + " SEK";
+  }
+
+  _formatDate(isoString) {
+    if (!isoString) return "";
+    const d = new Date(isoString);
+    return d.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+
+  _formatPeriod(startIso, endIso) {
+    if (!startIso || !endIso) return "";
+    const start = new Date(startIso);
+    const end = new Date(endIso);
+    const opts = {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    };
+    return (
+      start.toLocaleString(undefined, opts) +
+      " – " +
+      end.toLocaleString(undefined, opts)
+    );
   }
 }
 

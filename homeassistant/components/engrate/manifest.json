@@ -1,6 +1,7 @@
 {
   "domain": "engrate",
   "name": "Engrate",
+  "after_dependencies": ["recorder"],
   "codeowners": ["@olofengrate"],
   "config_flow": true,
   "dependencies": ["http", "panel_custom"],

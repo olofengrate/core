@@ -1,5 +1,5 @@
 /**
- * Engrate Card - Lovelace card showing the system operator name.
+ * Engrate Card - Lovelace card showing yearly energy costs.
  *
  * Usage in Lovelace:
  *   type: custom:engrate-card
@@ -69,36 +69,77 @@ class EngrateCard extends HTMLElement {
         ha-card {
           padding: 16px;
         }
-        .content {
+        .header {
           display: flex;
           align-items: center;
           gap: 12px;
+          margin-bottom: 12px;
         }
         .logo {
-          max-width: 40px;
-          max-height: 40px;
+          max-width: 32px;
+          max-height: 32px;
         }
-        .name {
+        .title {
           font-size: 16px;
           font-weight: 500;
           color: var(--primary-text-color);
         }
-        .label {
+        .period {
           font-size: 12px;
           color: var(--secondary-text-color);
+          margin-bottom: 12px;
+        }
+        .cost-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 6px 0;
+          border-bottom: 1px solid var(--divider-color, #e0e0e0);
+        }
+        .cost-row.total {
+          font-weight: 600;
+          border-bottom: none;
+          padding-top: 8px;
+        }
+        .cost-label {
+          font-size: 14px;
+          color: var(--secondary-text-color);
+        }
+        .cost-value {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--primary-text-color);
+        }
+        .last-updated {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+          text-align: right;
+          margin-top: 8px;
         }
         .error {
           color: var(--error-color, #db4437);
-          justify-content: center;
+          text-align: center;
+          padding: 16px;
         }
       </style>
-      <ha-card header="${this._escapeHtml(this._config.title || "System Operator")}">
-        <div class="content">
+      <ha-card>
+        <div class="header">
           ${logoHtml}
-          <div>
-            <div class="name">${this._escapeHtml(data.system_operator_name || "Unknown")}</div>
-          </div>
+          <div class="title">${this._escapeHtml(this._config.title || "Engrate")}</div>
         </div>
+        <div class="period">${this._formatPeriod(data.period_start, data.period_end)}</div>
+        <div class="cost-row">
+          <span class="cost-label">Grid cost</span>
+          <span class="cost-value">${this._formatCost(data.grid_cost)}</span>
+        </div>
+        <div class="cost-row">
+          <span class="cost-label">Energy cost</span>
+          <span class="cost-value">${this._formatCost(data.energy_cost)}</span>
+        </div>
+        <div class="cost-row total">
+          <span class="cost-label">Total cost</span>
+          <span class="cost-value">${this._formatCost(data.total_cost)}</span>
+        </div>
+        ${data.last_calculated ? `<div class="last-updated">Last calculated: ${this._formatDate(data.last_calculated)}</div>` : ""}
       </ha-card>
     `;
   }
@@ -110,8 +151,40 @@ class EngrateCard extends HTMLElement {
     return div.innerHTML;
   }
 
+  _formatCost(value) {
+    if (value == null) return "\u2014";
+    return value.toFixed(2) + " SEK";
+  }
+
+  _formatDate(isoString) {
+    if (!isoString) return "";
+    const d = new Date(isoString);
+    return d.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+
+  _formatPeriod(startIso, endIso) {
+    if (!startIso || !endIso) return "";
+    const start = new Date(startIso);
+    const end = new Date(endIso);
+    const opts = {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    };
+    return (
+      start.toLocaleString(undefined, opts) +
+      " \u2013 " +
+      end.toLocaleString(undefined, opts)
+    );
+  }
+
   getCardSize() {
-    return 2;
+    return 3;
   }
 
   static getStubConfig() {
@@ -125,6 +198,6 @@ customElements.define("engrate-card", EngrateCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "engrate-card",
-  name: "Engrate System Operator",
-  description: "Displays the system operator for your Engrate tariff.",
+  name: "Engrate Costs",
+  description: "Displays yearly energy costs calculated by Engrate.",
 });
