@@ -198,6 +198,7 @@ FLOWS = {
         "energenie_power_sockets",
         "energyid",
         "energyzero",
+        "engrate",
         "enigma2",
         "enocean",
         "enphase_envoy",
