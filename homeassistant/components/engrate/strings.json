@@ -16,6 +16,10 @@
         "data": {
           "hourly-available-conditional-injection-capacity": "Available injection capacity",
           "hourly-available-conditional-offtake-capacity": "Available offtake capacity",
+          "quarter-hourly-day-ahead-price-se1": "Day-ahead price SE1",
+          "quarter-hourly-day-ahead-price-se2": "Day-ahead price SE2",
+          "quarter-hourly-day-ahead-price-se3": "Day-ahead price SE3",
+          "quarter-hourly-day-ahead-price-se4": "Day-ahead price SE4",
           "quarter-hourly-energy-injection": "Energy production (export)",
           "quarter-hourly-energy-offtake": "Energy consumption (import)",
           "yearly-conditional-subscribed-injection-capacity": "Conditional injection capacity",
@@ -26,6 +30,10 @@
         "data_description": {
           "hourly-available-conditional-injection-capacity": "A sensor with available conditional injection capacity (kW).",
           "hourly-available-conditional-offtake-capacity": "A sensor with available conditional offtake capacity (kW).",
+          "quarter-hourly-day-ahead-price-se1": "A sensor that provides the current day-ahead electricity price for SE1 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se2": "A sensor that provides the current day-ahead electricity price for SE2 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se3": "A sensor that provides the current day-ahead electricity price for SE3 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se4": "A sensor that provides the current day-ahead electricity price for SE4 (SEK/kWh).",
           "quarter-hourly-energy-injection": "A sensor that tracks total energy exported to the grid (kWh).",
           "quarter-hourly-energy-offtake": "A sensor that tracks total energy imported from the grid (kWh).",
           "yearly-conditional-subscribed-injection-capacity": "A sensor with your conditional subscribed injection capacity (kW).",
@@ -34,15 +42,6 @@
           "yearly-firm-subscribed-offtake-capacity": "A sensor with your firm subscribed offtake capacity (kW)."
         },
         "description": "The selected tariff requires the following data sources."
-      },
-      "configure_energy_cost": {
-        "data": {
-          "energy_cost_entity": "Energy cost entity"
-        },
-        "data_description": {
-          "energy_cost_entity": "A sensor that provides the current energy price (e.g. spot price or fixed price, in SEK/kWh)."
-        },
-        "description": "Select the entity that provides the current energy price for cost calculations."
       },
       "reconfigure": {
         "data": {
@@ -84,14 +83,8 @@
   },
   "entity": {
     "sensor": {
-      "energy_cost": {
-        "name": "Energy cost"
-      },
       "grid_cost": {
         "name": "Grid cost"
-      },
-      "total_cost": {
-        "name": "Total cost"
       }
     }
   }

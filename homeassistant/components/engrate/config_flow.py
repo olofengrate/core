@@ -25,11 +25,9 @@ from .api import (
 from .const import (
     CONF_API_KEY,
     CONF_DATASETS,
-    CONF_ENERGY_COST_ENTITY,
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
     DOMAIN,
-    ENERGY_COST_DATASET_IDS,
     LOGGER,
 )
 
@@ -174,14 +172,11 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
             self._tariff = next(t for t in self._tariffs if t["id"] == tariff_id)
             all_datasets = _extract_required_datasets(self._tariff)
 
-            # Separate energy cost datasets from regular datasets
-            self._required_datasets = [
-                ds for ds in all_datasets if ds["id"] not in ENERGY_COST_DATASET_IDS
-            ]
+            self._required_datasets = all_datasets
 
             if not self._required_datasets:
-                # No regular input datasets — go to spot price or create entry
-                return await self._async_finish_or_energy_cost({})
+                # No datasets needed — create entry directly
+                return self._create_config_entry({})
 
             return await self.async_step_configure_datasets()
 
@@ -203,7 +198,7 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
         assert self._tariff is not None
 
         if user_input is not None:
-            return await self._async_finish_or_energy_cost(user_input)
+            return self._create_config_entry(user_input)
 
         # Build a schema with one entity selector per required dataset
         schema_dict: dict[vol.Marker, Any] = {}
@@ -227,41 +222,17 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(schema_dict),
         )
 
-    async def _async_finish_or_energy_cost(
-        self, datasets: dict[str, Any]
-    ) -> ConfigFlowResult:
-        """Show the energy cost step."""
+    def _create_config_entry(self, datasets: dict[str, Any]) -> ConfigFlowResult:
+        """Create the config entry with the collected data."""
         assert self._tariff is not None
-        self._datasets = datasets
-        return await self.async_step_configure_energy_cost()
-
-    async def async_step_configure_energy_cost(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle energy cost entity configuration."""
-        assert self._tariff is not None
-
-        if user_input is not None:
-            return self.async_create_entry(
-                title=self._tariff["name"],
-                data={
-                    CONF_API_KEY: self._api_key,
-                    CONF_SYSTEM_OPERATOR_ID: self._system_operator_id,
-                    CONF_TARIFF_ID: self._tariff["id"],
-                    CONF_DATASETS: self._datasets,
-                    CONF_ENERGY_COST_ENTITY: user_input[CONF_ENERGY_COST_ENTITY],
-                },
-            )
-
-        return self.async_show_form(
-            step_id="configure_energy_cost",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_ENERGY_COST_ENTITY): EntitySelector(
-                        EntitySelectorConfig(domain="sensor")
-                    ),
-                }
-            ),
+        return self.async_create_entry(
+            title=self._tariff["name"],
+            data={
+                CONF_API_KEY: self._api_key,
+                CONF_SYSTEM_OPERATOR_ID: self._system_operator_id,
+                CONF_TARIFF_ID: self._tariff["id"],
+                CONF_DATASETS: datasets,
+            },
         )
 
     async def async_step_reconfigure(

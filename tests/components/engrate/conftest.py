@@ -9,7 +9,6 @@ import pytest
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
     CONF_DATASETS,
-    CONF_ENERGY_COST_ENTITY,
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
     DOMAIN,
@@ -194,7 +193,6 @@ def mock_config_entry() -> MockConfigEntry:
             CONF_DATASETS: {
                 "quarter-hourly-energy-offtake": "sensor.energy_meter",
             },
-            CONF_ENERGY_COST_ENTITY: "sensor.energy_price",
         },
     )
 
@@ -259,24 +257,9 @@ MOCK_HOURLY_STATS_ENERGY = [
     {
         "start": datetime(2026, 1, 1, 0, 0).timestamp(),
         "change": 10.0,
-        "mean": None,
     },
     {
         "start": datetime(2026, 1, 1, 1, 0).timestamp(),
         "change": 10.0,
-        "mean": None,
-    },
-]
-
-MOCK_HOURLY_STATS_PRICE = [
-    {
-        "start": datetime(2026, 1, 1, 0, 0).timestamp(),
-        "change": None,
-        "mean": 0.50,
-    },
-    {
-        "start": datetime(2026, 1, 1, 1, 0).timestamp(),
-        "change": None,
-        "mean": 0.50,
     },
 ]

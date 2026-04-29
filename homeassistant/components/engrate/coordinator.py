@@ -16,7 +16,6 @@ from homeassistant.util import dt as dt_util
 from .api import EngrateApiAuthError, EngrateApiClient, EngrateApiConnectionError
 from .const import (
     CONF_DATASETS,
-    CONF_ENERGY_COST_ENTITY,
     CONF_TARIFF_ID,
     DOMAIN,
     ENERGY_COST_DATASET_IDS,
@@ -39,8 +38,6 @@ class EngrateTariffData:
     system_operator_description: str | None
     system_operator_logo_url: str | None
     grid_cost: float | None
-    energy_cost: float | None
-    total_cost: float | None
     last_calculated: datetime | None
     period_start: datetime | None
     period_end: datetime | None
@@ -56,34 +53,52 @@ def _compute_update_interval(entry_id: str) -> timedelta:
     return timedelta(minutes=55 + offset)
 
 
-def _year_start_local() -> datetime:
-    """Return Jan 1 of the current year in the local timezone."""
+def _month_start_local() -> datetime:
+    """Return the 1st of the current month in the local timezone."""
     now = dt_util.now()
-    return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def _expand_hourly_to_quarter_hourly(
-    stats: list[dict[str, Any]], value_key: str, *, divide: bool = False
+def _build_quarter_hourly_series(
+    stats: list[dict[str, Any]],
+    value_key: str,
+    period_start: datetime,
+    period_end: datetime,
+    *,
+    divide: bool = False,
 ) -> list[dict[str, Any]]:
-    """Expand hourly statistics into quarter-hourly data points.
+    """Build a complete quarter-hourly time series from hourly stats.
 
-    For energy/change values, divide by 4 to distribute evenly.
-    For price/mean values, replicate the same value 4 times.
+    Generates data points for every hour in the period. Hours missing
+    from the recorder data are filled with 0.
+    For energy/change values (divide=True), each hourly value is split
+    into 4 equal quarter-hourly values.
+    For price/mean values (divide=False), the value is replicated 4 times.
     """
-    quarter_hourly: list[dict[str, Any]] = []
+    # Index stats by start timestamp for fast lookup
+    stats_by_hour: dict[float, float] = {}
     for row in stats:
-        ts = datetime.fromtimestamp(row["start"], tz=dt_util.UTC)
         value = row.get(value_key)
-        if value is None:
-            continue
-        qh_value = value / 4 if divide else value
+        if value is not None:
+            stats_by_hour[row["start"]] = value
+
+    quarter_hourly: list[dict[str, Any]] = []
+    start_utc = dt_util.as_utc(period_start)
+    end_utc = dt_util.as_utc(period_end)
+    current = start_utc.replace(minute=0, second=0, microsecond=0)
+
+    while current < end_utc:
+        hourly_value = stats_by_hour.get(current.timestamp(), 0.0)
+        qh_value = hourly_value / 4 if divide else hourly_value
         quarter_hourly.extend(
             {
-                "timestamp": (ts + timedelta(minutes=offset_min)).isoformat(),
+                "timestamp": (current + timedelta(minutes=offset_min)).isoformat(),
                 "value": qh_value,
             }
             for offset_min in (0, 15, 30, 45)
         )
+        current += timedelta(hours=1)
+
     return quarter_hourly
 
 
@@ -124,51 +139,23 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         configured_datasets: dict[str, str] = self.config_entry.data.get(
             CONF_DATASETS, {}
         )
-        energy_cost_entity_id: str = self.config_entry.data[CONF_ENERGY_COST_ENTITY]
 
         now = dt_util.now()
-        year_start = _year_start_local()
+        period_start = _month_start_local()
+        period_end = now
 
-        # Determine the common period where all required datasets have data
-        period_start, period_end = await self._find_common_period(
+        grid_cost = await self._calculate_grid_cost(
+            tariff_id,
             configured_datasets,
-            tariff,
-            energy_cost_entity_id,
-            year_start,
-            now,
+            period_start,
+            period_end,
         )
-
-        grid_cost: float | None = None
-        energy_cost: float | None = None
-
-        if period_start is not None and period_end is not None:
-            grid_cost = await self._calculate_grid_cost(
-                tariff_id,
-                configured_datasets,
-                tariff,
-                energy_cost_entity_id,
-                period_start,
-                period_end,
-            )
-            energy_cost = await self._calculate_energy_cost(
-                configured_datasets,
-                energy_cost_entity_id,
-                period_start,
-                period_end,
-            )
-
-        total_cost: float | None = None
-        if grid_cost is not None or energy_cost is not None:
-            total_cost = (grid_cost or 0.0) + (energy_cost or 0.0)
 
         last_calculated = dt_util.utcnow()
 
         LOGGER.debug(
-            "Update complete: grid_cost=%s, energy_cost=%s, total_cost=%s, "
-            "period=%s to %s",
+            "Update complete: grid_cost=%s, period=%s to %s",
             grid_cost,
-            energy_cost,
-            total_cost,
             period_start.isoformat() if period_start else None,
             period_end.isoformat() if period_end else None,
         )
@@ -189,8 +176,6 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
                 system_operator.get("logo_url") if system_operator else None
             ),
             grid_cost=grid_cost,
-            energy_cost=energy_cost,
-            total_cost=total_cost,
             last_calculated=last_calculated,
             period_start=period_start,
             period_end=period_end,
@@ -220,65 +205,10 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         )
         return stats.get(entity_id, [])
 
-    async def _find_common_period(
-        self,
-        configured_datasets: dict[str, str],
-        tariff: dict[str, Any],
-        energy_cost_entity_id: str,
-        year_start: datetime,
-        now: datetime,
-    ) -> tuple[datetime | None, datetime | None]:
-        """Find the period covered by all required datasets.
-
-        Queries recorder for each required entity and returns the
-        intersection: (latest first-timestamp, now). If all data exists
-        from Jan 1, returns (Jan 1, now). If any dataset has no data,
-        returns (None, None).
-        """
-        # Collect all entity IDs that must have data
-        required_entity_ids: list[str] = list(configured_datasets.values())
-
-        # Check if tariff requires spot price datasets
-        energy_cost_ds_ids = {
-            ds["id"]
-            for component in tariff.get("tariff_components", [])
-            for ds in component.get("datasets", [])
-            if ds["id"] in ENERGY_COST_DATASET_IDS
-        }
-        if energy_cost_ds_ids:
-            required_entity_ids.append(energy_cost_entity_id)
-
-        # Also need offtake + price for energy cost calculation
-        offtake_entity_id = configured_datasets.get("quarter-hourly-energy-offtake")
-        if offtake_entity_id and energy_cost_entity_id not in required_entity_ids:
-            required_entity_ids.append(energy_cost_entity_id)
-
-        if not required_entity_ids:
-            return None, None
-
-        # Find the latest "first data point" across all entities
-        latest_start: float = year_start.timestamp()
-        for entity_id in required_entity_ids:
-            rows = await self._query_stats(
-                entity_id, year_start, now, {"change", "mean"}
-            )
-            if not rows:
-                LOGGER.debug(
-                    "No recorder data for %s, cannot determine period", entity_id
-                )
-                return None, None
-            first_ts = rows[0]["start"]
-            latest_start = max(latest_start, first_ts)
-
-        period_start = datetime.fromtimestamp(latest_start, tz=year_start.tzinfo)
-        return period_start, now
-
     async def _calculate_grid_cost(
         self,
         tariff_id: str,
         configured_datasets: dict[str, str],
-        tariff: dict[str, Any],
-        energy_cost_entity_id: str,
         period_start: datetime,
         period_end: datetime,
     ) -> float | None:
@@ -299,44 +229,16 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
 
         # Build time series for each configured dataset from recorder history
         for dataset_name, entity_id in configured_datasets.items():
+            is_price = dataset_name in ENERGY_COST_DATASET_IDS
+            stat_type = "mean" if is_price else "change"
             rows = await self._query_stats(
-                entity_id, period_start, period_end, {"change"}
+                entity_id, period_start, period_end, {stat_type}
             )
-            if not rows:
-                LOGGER.debug(
-                    "No recorder stats for %s (%s), skipping",
-                    dataset_name,
-                    entity_id,
-                )
-                continue
 
-            data_points = _expand_hourly_to_quarter_hourly(rows, "change", divide=True)
-            if data_points:
-                api_datasets.append({"name": dataset_name, "data": data_points})
-
-        # Add spot price data for energy cost datasets the tariff requires
-        energy_cost_ds_ids = {
-            ds["id"]
-            for component in tariff.get("tariff_components", [])
-            for ds in component.get("datasets", [])
-            if ds["id"] in ENERGY_COST_DATASET_IDS
-        }
-        if energy_cost_ds_ids:
-            price_rows = await self._query_stats(
-                energy_cost_entity_id, period_start, period_end, {"mean"}
+            data_points = _build_quarter_hourly_series(
+                rows, stat_type, period_start, period_end, divide=not is_price
             )
-            if price_rows:
-                price_points = _expand_hourly_to_quarter_hourly(
-                    price_rows, "mean", divide=False
-                )
-                api_datasets.extend(
-                    {"name": ds_id, "data": price_points}
-                    for ds_id in energy_cost_ds_ids
-                )
-
-        if not api_datasets:
-            LOGGER.debug("No dataset time series available for grid cost calculation")
-            return None
+            api_datasets.append({"name": dataset_name, "data": data_points})
 
         try:
             components = await self.client.async_calculate_tariff(
@@ -358,52 +260,6 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
                         total += point.get("value", 0.0)
 
         return total
-
-    async def _calculate_energy_cost(
-        self,
-        configured_datasets: dict[str, str],
-        energy_cost_entity_id: str,
-        period_start: datetime,
-        period_end: datetime,
-    ) -> float | None:
-        """Calculate energy cost for the full period using recorder history.
-
-        Multiplies hourly spot price by hourly energy consumption
-        for each hour in the period.
-        """
-        offtake_entity_id = configured_datasets.get("quarter-hourly-energy-offtake")
-        if not offtake_entity_id:
-            return None
-
-        # Query consumption deltas and spot prices from recorder
-        consumption_rows = await self._query_stats(
-            offtake_entity_id, period_start, period_end, {"change"}
-        )
-        price_rows = await self._query_stats(
-            energy_cost_entity_id, period_start, period_end, {"mean"}
-        )
-
-        if not consumption_rows or not price_rows:
-            return None
-
-        # Build a lookup of hourly prices by start timestamp
-        price_by_hour: dict[float, float] = {}
-        for row in price_rows:
-            mean = row.get("mean")
-            if mean is not None:
-                price_by_hour[row["start"]] = mean
-
-        total = 0.0
-        for row in consumption_rows:
-            change = row.get("change")
-            if change is None or change <= 0:
-                continue
-            price = price_by_hour.get(row["start"])
-            if price is None:
-                continue
-            total += change * price
-
-        return total if total > 0 else None
 
     async def _resolve_system_operator(
         self, tariff: dict[str, Any]

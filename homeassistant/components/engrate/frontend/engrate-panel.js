@@ -184,19 +184,11 @@ class EngratePanel extends HTMLElement {
           <pre class="json-block" id="tariff-json" style="display:none">${this._escapeHtml(JSON.stringify(data.tariff_raw, null, 2))}</pre>
         </div>
         <div class="card">
-          <div class="label">Yearly Costs</div>
+          <div class="label">Grid Cost</div>
           <div class="period">${this._formatPeriod(data.period_start, data.period_end)}</div>
           <div class="cost-row">
             <span class="cost-label">Grid cost</span>
             <span class="cost-value">${this._formatCost(data.grid_cost)}</span>
-          </div>
-          <div class="cost-row">
-            <span class="cost-label">Energy cost</span>
-            <span class="cost-value">${this._formatCost(data.energy_cost)}</span>
-          </div>
-          <div class="cost-row total">
-            <span class="cost-label">Total cost</span>
-            <span class="cost-value">${this._formatCost(data.total_cost)}</span>
           </div>
           ${data.last_calculated ? `<div class="last-updated">Last calculated: ${this._formatDate(data.last_calculated)}</div>` : ""}
         </div>

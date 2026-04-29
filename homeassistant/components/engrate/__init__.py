@@ -35,9 +35,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EngrateConfigEntry) -> b
     # Register websocket commands (idempotent)
     engrate_ws.async_setup(hass)
 
-    # Register panel and card frontend assets
+    # Register panel frontend assets
     await _async_register_panel(hass)
-    _register_card_js(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -74,14 +73,8 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
         webcomponent_name="engrate-panel",
         sidebar_title="Engrate",
         sidebar_icon="mdi:alpha-e-box",
-        module_url=f"{URL_BASE}/engrate-panel.js?v=8",
+        module_url=f"{URL_BASE}/engrate-panel.js?v=9",
         embed_iframe=False,
         require_admin=False,
         config_panel_domain=DOMAIN,
     )
-
-
-def _register_card_js(hass: HomeAssistant) -> None:
-    """Register the Engrate Lovelace card as an extra JS module."""
-    card_url = f"{URL_BASE}/engrate-card.js?v=8"
-    frontend.add_extra_js_url(hass, card_url)

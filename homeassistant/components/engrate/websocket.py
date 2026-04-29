@@ -57,8 +57,6 @@ def ws_get_tariff_data(
             "system_operator_description": data.system_operator_description,
             "system_operator_logo_url": data.system_operator_logo_url,
             "grid_cost": data.grid_cost,
-            "energy_cost": data.energy_cost,
-            "total_cost": data.total_cost,
             "last_calculated": data.last_calculated.isoformat()
             if data.last_calculated
             else None,

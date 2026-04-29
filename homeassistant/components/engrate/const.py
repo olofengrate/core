@@ -11,7 +11,6 @@ CONF_API_KEY = "api_key"
 CONF_SYSTEM_OPERATOR_ID = "system_operator_id"
 CONF_TARIFF_ID = "tariff_id"
 CONF_DATASETS = "datasets"
-CONF_ENERGY_COST_ENTITY = "energy_cost_entity"
 
 ENERGY_COST_DATASET_IDS = {
     "quarter-hourly-day-ahead-price-se1",

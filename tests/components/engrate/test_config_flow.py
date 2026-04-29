@@ -6,7 +6,6 @@ from homeassistant import config_entries
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
     CONF_DATASETS,
-    CONF_ENERGY_COST_ENTITY,
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
     DOMAIN,
@@ -66,14 +65,6 @@ async def test_user_flow_full(hass: HomeAssistant, mock_setup_entry: AsyncMock) 
         {"quarter-hourly-energy-offtake": "sensor.energy_meter"},
     )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "configure_energy_cost"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ENERGY_COST_ENTITY: "sensor.energy_price"},
-    )
-
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Säkringsabonnemang - 20 A"
     assert result["data"] == {
@@ -81,7 +72,6 @@ async def test_user_flow_full(hass: HomeAssistant, mock_setup_entry: AsyncMock) 
         CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
         CONF_TARIFF_ID: "tariff-uuid-1",
         CONF_DATASETS: {"quarter-hourly-energy-offtake": "sensor.energy_meter"},
-        CONF_ENERGY_COST_ENTITY: "sensor.energy_price",
     }
     assert result["result"].unique_id == "tariff-uuid-1"
     assert len(mock_setup_entry.mock_calls) == 1
@@ -130,14 +120,6 @@ async def test_user_flow_with_injection(
             "quarter-hourly-energy-offtake": "sensor.energy_import",
             "quarter-hourly-energy-injection": "sensor.energy_export",
         },
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "configure_energy_cost"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ENERGY_COST_ENTITY: "sensor.energy_price"},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -326,10 +308,10 @@ async def test_user_flow_already_configured(
     assert result["reason"] == "already_configured"
 
 
-async def test_user_flow_with_energy_cost(
+async def test_user_flow_with_spot_price_dataset(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
-    """Test flow where user configures an energy cost entity."""
+    """Test flow where tariff requires a spot price dataset."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -363,26 +345,20 @@ async def test_user_flow_with_energy_cost(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "configure_datasets"
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"quarter-hourly-energy-offtake": "sensor.energy_meter"},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "configure_energy_cost"
-
+    # Both energy offtake and spot price datasets should appear
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_ENERGY_COST_ENTITY: "sensor.nordpool_se3",
+            "quarter-hourly-energy-offtake": "sensor.energy_meter",
+            "quarter-hourly-day-ahead-price-se3": "sensor.nordpool_se3",
         },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Spotpris tariff"
-    assert result["data"][CONF_ENERGY_COST_ENTITY] == "sensor.nordpool_se3"
     assert result["data"][CONF_DATASETS] == {
         "quarter-hourly-energy-offtake": "sensor.energy_meter",
+        "quarter-hourly-day-ahead-price-se3": "sensor.nordpool_se3",
     }
 
 
