@@ -8,6 +8,7 @@ import pytest
 
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
+    CONF_COUNTRY,
     CONF_DATASETS,
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
@@ -188,6 +189,7 @@ def mock_config_entry() -> MockConfigEntry:
         title="Säkringsabonnemang - 20 A",
         data={
             CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
             CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
             CONF_TARIFF_ID: "tariff-uuid-1",
             CONF_DATASETS: {
@@ -230,7 +232,7 @@ def make_recorder_stats(
 
 @pytest.fixture
 def mock_recorder() -> Generator[MagicMock]:
-    """Mock recorder get_instance and statistics_during_period."""
+    """Mock recorder get_instance, statistics_during_period, and external stats."""
     with (
         patch(
             "homeassistant.components.engrate.coordinator.get_instance"
@@ -238,6 +240,9 @@ def mock_recorder() -> Generator[MagicMock]:
         patch(
             "homeassistant.components.engrate.coordinator.statistics_during_period"
         ) as mock_stats,
+        patch(
+            "homeassistant.components.engrate.coordinator.async_add_external_statistics"
+        ),
     ):
         # Make async_add_executor_job call the function synchronously
         recorder_instance = MagicMock()

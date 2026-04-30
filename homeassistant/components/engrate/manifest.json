@@ -4,7 +4,6 @@
   "after_dependencies": ["recorder"],
   "codeowners": ["@olofengrate"],
   "config_flow": true,
-  "dependencies": ["http", "panel_custom"],
   "documentation": "https://www.home-assistant.io/integrations/engrate",
   "integration_type": "service",
   "iot_class": "cloud_polling",

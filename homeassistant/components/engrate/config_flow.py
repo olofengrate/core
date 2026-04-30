@@ -11,9 +11,15 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    CountrySelector,
+    CountrySelectorConfig,
     EntityFilterSelectorConfig,
     EntitySelector,
     EntitySelectorConfig,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .api import (
@@ -24,6 +30,7 @@ from .api import (
 )
 from .const import (
     CONF_API_KEY,
+    CONF_COUNTRY,
     CONF_DATASETS,
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
@@ -75,6 +82,7 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
         """Initialize."""
         self._api_key: str | None = None
         self._client: EngrateApiClient | None = None
+        self._country: str | None = None
         self._system_operators: list[dict[str, Any]] = []
         self._system_operator_id: str | None = None
         self._tariffs: list[dict[str, Any]] = []
@@ -85,6 +93,52 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Handle the country selection or reuse from existing entry."""
+        # Reuse country and API key from an existing entry if available
+        existing_entries = self.hass.config_entries.async_entries(DOMAIN)
+        if existing_entries and user_input is None:
+            existing = existing_entries[0].data
+            self._country = existing.get(CONF_COUNTRY, "SE")
+            existing_key = existing[CONF_API_KEY]
+            session = async_get_clientsession(self.hass)
+            client = EngrateApiClient(session, existing_key)
+            try:
+                system_operators = await client.async_list_system_operators(
+                    country=self._country
+                )
+            except EngrateApiAuthError, EngrateApiConnectionError:
+                pass  # Fall through to show country selection
+            else:
+                if system_operators:
+                    self._api_key = existing_key
+                    self._client = client
+                    self._system_operators = system_operators
+                    return await self.async_step_select_system_operator()
+
+        return await self.async_step_select_country(user_input)
+
+    async def async_step_select_country(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle the country selection step."""
+        if user_input is not None:
+            self._country = user_input[CONF_COUNTRY]
+            return await self.async_step_api_key()
+
+        return self.async_show_form(
+            step_id="select_country",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_COUNTRY): CountrySelector(
+                        CountrySelectorConfig(countries=["SE"])
+                    )
+                }
+            ),
+        )
+
+    async def async_step_api_key(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the API key input step."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -92,7 +146,9 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
             session = async_get_clientsession(self.hass)
             client = EngrateApiClient(session, api_key)
             try:
-                system_operators = await client.async_list_system_operators()
+                system_operators = await client.async_list_system_operators(
+                    country=self._country or "SE"
+                )
             except EngrateApiAuthError:
                 errors["base"] = "invalid_auth"
             except EngrateApiConnectionError:
@@ -109,7 +165,7 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_select_system_operator()
 
         return self.async_show_form(
-            step_id="user",
+            step_id="api_key",
             data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
             errors=errors,
             description_placeholders={"console_url": "https://console.engrate.io/"},
@@ -139,12 +195,7 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
                 LOGGER.exception("Unexpected exception")
                 return self.async_abort(reason="unknown")
 
-            # Only show fuse-based tariffs
-            self._tariffs = [
-                t
-                for t in all_tariffs
-                if "fuse_based" in t.get("eligibility", {}).get("other", [])
-            ]
+            self._tariffs = all_tariffs
 
             if not self._tariffs:
                 return self.async_abort(reason="no_tariffs")
@@ -152,11 +203,21 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_select_tariff()
 
         sorted_operators = sorted(self._system_operators, key=lambda op: op["name"])
-        operator_options = {op["id"]: op["name"] for op in sorted_operators}
+        operator_options = [
+            SelectOptionDict(value=op["id"], label=op["name"])
+            for op in sorted_operators
+        ]
         return self.async_show_form(
             step_id="select_system_operator",
             data_schema=vol.Schema(
-                {vol.Required(CONF_SYSTEM_OPERATOR_ID): vol.In(operator_options)}
+                {
+                    vol.Required(CONF_SYSTEM_OPERATOR_ID): SelectSelector(
+                        SelectSelectorConfig(
+                            options=operator_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
             ),
         )
 
@@ -183,12 +244,24 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
         sorted_tariffs = sorted(
             self._tariffs, key=lambda t: _natural_sort_key(t["name"])
         )
-        tariff_options = {t["id"]: t["name"] for t in sorted_tariffs}
+        tariff_options = [
+            SelectOptionDict(value=t["id"], label=t["name"]) for t in sorted_tariffs
+        ]
         return self.async_show_form(
             step_id="select_tariff",
             data_schema=vol.Schema(
-                {vol.Required(CONF_TARIFF_ID): vol.In(tariff_options)}
+                {
+                    vol.Required(CONF_TARIFF_ID): SelectSelector(
+                        SelectSelectorConfig(
+                            options=tariff_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
             ),
+            description_placeholders={
+                "system_operator_url": f"https://console.engrate.io/products/cost-of-energy/system-operators/{self._system_operator_id}"
+            },
         )
 
     async def async_step_configure_datasets(
@@ -220,6 +293,9 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="configure_datasets",
             data_schema=vol.Schema(schema_dict),
+            description_placeholders={
+                "datasets_docs_url": "https://docs.engrate.io/api-reference/cost-of-energy/models/dataset#registered-datasets"
+            },
         )
 
     def _create_config_entry(self, datasets: dict[str, Any]) -> ConfigFlowResult:
@@ -229,6 +305,7 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
             title=self._tariff["name"],
             data={
                 CONF_API_KEY: self._api_key,
+                CONF_COUNTRY: self._country,
                 CONF_SYSTEM_OPERATOR_ID: self._system_operator_id,
                 CONF_TARIFF_ID: self._tariff["id"],
                 CONF_DATASETS: datasets,

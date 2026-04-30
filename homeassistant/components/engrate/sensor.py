@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -23,41 +19,51 @@ async def async_setup_entry(
     entry: EngrateConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Engrate sensor based on a config entry."""
-    coordinator = entry.runtime_data
-    async_add_entities([EngrateGridCostSensor(coordinator)])
+    """Set up Engrate sensors from a config entry."""
+    async_add_entities([EngrateGridCostSensor(entry.runtime_data)])
 
 
 class EngrateGridCostSensor(CoordinatorEntity[EngrateCoordinator], SensorEntity):
-    """Sensor tracking grid cost calculated by Engrate."""
+    """Sensor for year-to-date grid cost."""
 
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
-    _attr_suggested_display_precision = 2
     _attr_has_entity_name = True
     _attr_translation_key = "grid_cost"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_icon = "mdi:cash-multiple"
 
     def __init__(self, coordinator: EngrateCoordinator) -> None:
         """Initialize the grid cost sensor."""
         super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_grid_cost"
-        self._attr_native_unit_of_measurement = coordinator.hass.config.currency
+        tariff_id = coordinator.config_entry.data["tariff_id"]
+        self._attr_unique_id = f"{tariff_id}_grid_cost"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
-            name="Engrate",
-            entry_type=DeviceEntryType.SERVICE,
+            identifiers={(DOMAIN, tariff_id)},
+            name=coordinator.data.tariff_name,
+            manufacturer=coordinator.data.system_operator_name,
+            model=coordinator.data.tariff_name,
         )
 
     @property
     def native_value(self) -> float | None:
-        """Return the grid cost value."""
-        if self.coordinator.data is None:
-            return None
+        """Return the year-to-date grid cost."""
         return self.coordinator.data.grid_cost
 
     @property
-    def last_reset(self) -> datetime | None:
-        """Return the start of the current calculation period (year start)."""
-        if self.coordinator.data is None:
-            return None
-        return self.coordinator.data.period_start
+    def native_unit_of_measurement(self) -> str:
+        """Return the currency from HA config."""
+        return self.hass.config.currency
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return component cost breakdown and period metadata."""
+        data = self.coordinator.data
+        attrs: dict[str, Any] = {}
+        for comp in data.component_costs:
+            attrs[comp["name"]] = comp["cost"]
+        if data.period_start:
+            attrs["period_start"] = data.period_start.isoformat()
+        if data.period_end:
+            attrs["period_end"] = data.period_end.isoformat()
+        if data.last_calculated:
+            attrs["last_calculated"] = data.last_calculated.isoformat()
+        return attrs

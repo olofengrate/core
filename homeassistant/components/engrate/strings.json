@@ -3,7 +3,7 @@
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",
       "no_system_operators": "No system operators found.",
-      "no_tariffs": "No tariffs found for this API key.",
+      "no_tariffs": "No tariffs found",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "error": {
@@ -12,45 +12,63 @@
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "step": {
-      "configure_datasets": {
+      "api_key": {
         "data": {
-          "hourly-available-conditional-injection-capacity": "Available injection capacity",
-          "hourly-available-conditional-offtake-capacity": "Available offtake capacity",
-          "quarter-hourly-day-ahead-price-se1": "Day-ahead price SE1",
-          "quarter-hourly-day-ahead-price-se2": "Day-ahead price SE2",
-          "quarter-hourly-day-ahead-price-se3": "Day-ahead price SE3",
-          "quarter-hourly-day-ahead-price-se4": "Day-ahead price SE4",
-          "quarter-hourly-energy-injection": "Energy production (export)",
-          "quarter-hourly-energy-offtake": "Energy consumption (import)",
-          "yearly-conditional-subscribed-injection-capacity": "Conditional injection capacity",
-          "yearly-conditional-subscribed-offtake-capacity": "Conditional offtake capacity",
-          "yearly-firm-subscribed-injection-capacity": "Subscribed injection capacity",
-          "yearly-firm-subscribed-offtake-capacity": "Subscribed offtake capacity"
+          "api_key": "[%key:common::config_flow::data::api_key%]"
         },
         "data_description": {
-          "hourly-available-conditional-injection-capacity": "A sensor with available conditional injection capacity (kW).",
-          "hourly-available-conditional-offtake-capacity": "A sensor with available conditional offtake capacity (kW).",
-          "quarter-hourly-day-ahead-price-se1": "A sensor that provides the current day-ahead electricity price for SE1 (SEK/kWh).",
-          "quarter-hourly-day-ahead-price-se2": "A sensor that provides the current day-ahead electricity price for SE2 (SEK/kWh).",
-          "quarter-hourly-day-ahead-price-se3": "A sensor that provides the current day-ahead electricity price for SE3 (SEK/kWh).",
-          "quarter-hourly-day-ahead-price-se4": "A sensor that provides the current day-ahead electricity price for SE4 (SEK/kWh).",
-          "quarter-hourly-energy-injection": "A sensor that tracks total energy exported to the grid (kWh).",
-          "quarter-hourly-energy-offtake": "A sensor that tracks total energy imported from the grid (kWh).",
-          "yearly-conditional-subscribed-injection-capacity": "A sensor with your conditional subscribed injection capacity (kW).",
-          "yearly-conditional-subscribed-offtake-capacity": "A sensor with your conditional subscribed offtake capacity (kW).",
-          "yearly-firm-subscribed-injection-capacity": "A sensor with your firm subscribed injection capacity (kW).",
-          "yearly-firm-subscribed-offtake-capacity": "A sensor with your firm subscribed offtake capacity (kW)."
+          "api_key": "Your Engrate API key for accessing tariff data."
         },
-        "description": "The selected tariff requires the following data sources."
+        "description": "Enter your Engrate API key to connect. Sign up and create an API key at [console.engrate.io]({console_url})."
+      },
+      "configure_datasets": {
+        "data": {
+          "hourly-available-conditional-injection-capacity": "hourly-available-conditional-injection-capacity",
+          "hourly-available-conditional-offtake-capacity": "hourly-available-conditional-offtake-capacity",
+          "quarter-hourly-day-ahead-price-se1": "quarter-hourly-day-ahead-price-se1",
+          "quarter-hourly-day-ahead-price-se2": "quarter-hourly-day-ahead-price-se2",
+          "quarter-hourly-day-ahead-price-se3": "quarter-hourly-day-ahead-price-se3",
+          "quarter-hourly-day-ahead-price-se4": "quarter-hourly-day-ahead-price-se4",
+          "quarter-hourly-energy-injection": "quarter-hourly-energy-injection",
+          "quarter-hourly-energy-offtake": "quarter-hourly-energy-offtake",
+          "yearly-conditional-subscribed-injection-capacity": "yearly-conditional-subscribed-injection-capacity",
+          "yearly-conditional-subscribed-offtake-capacity": "yearly-conditional-subscribed-offtake-capacity",
+          "yearly-firm-subscribed-injection-capacity": "yearly-firm-subscribed-injection-capacity",
+          "yearly-firm-subscribed-offtake-capacity": "yearly-firm-subscribed-offtake-capacity"
+        },
+        "data_description": {
+          "hourly-available-conditional-injection-capacity": "Hourly conditional (secunda) injection capacity actually available (kW). Equals subscribed level when not curtailed, lower or zero during DSO-initiated curtailment.",
+          "hourly-available-conditional-offtake-capacity": "Hourly conditional (secunda) offtake capacity actually available (kW). Equals subscribed level when not curtailed, lower or zero during DSO-initiated curtailment.",
+          "quarter-hourly-day-ahead-price-se1": "Quarter-hourly day-ahead spot price for bidding zone SE1 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se2": "Quarter-hourly day-ahead spot price for bidding zone SE2 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se3": "Quarter-hourly day-ahead spot price for bidding zone SE3 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se4": "Quarter-hourly day-ahead spot price for bidding zone SE4 (SEK/kWh).",
+          "quarter-hourly-energy-injection": "Quarter-hourly energy exported (injected) to the grid (kWh).",
+          "quarter-hourly-energy-offtake": "Quarter-hourly energy consumed (imported) from the grid (kWh).",
+          "yearly-conditional-subscribed-injection-capacity": "Yearly conditional (secunda) subscribed power injection capacity (kW).",
+          "yearly-conditional-subscribed-offtake-capacity": "Yearly conditional (secunda) subscribed power offtake capacity (kW).",
+          "yearly-firm-subscribed-injection-capacity": "Yearly firm (prima) subscribed power injection capacity (kW).",
+          "yearly-firm-subscribed-offtake-capacity": "Yearly firm (prima) subscribed power offtake capacity (kW)."
+        },
+        "description": "The selected tariff requires the following data sources. For more information, see the [Engrate documentation]({datasets_docs_url})."
       },
       "reconfigure": {
         "data": {
           "tariff_id": "Tariff"
         },
         "data_description": {
-          "tariff_id": "The tariff to use for energy cost calculations."
+          "tariff_id": "The tariff to use for grid cost calculations."
         },
         "description": "Select a different tariff."
+      },
+      "select_country": {
+        "data": {
+          "country": "[%key:common::config_flow::data::country%]"
+        },
+        "data_description": {
+          "country": "The country where your grid connection is located."
+        },
+        "description": "Select the country where your grid connection is located. Currently only Sweden is supported, more markets are coming soon."
       },
       "select_system_operator": {
         "data": {
@@ -66,25 +84,16 @@
           "tariff_id": "Tariff"
         },
         "data_description": {
-          "tariff_id": "The tariff to use for energy cost calculations."
+          "tariff_id": "The tariff to use for grid cost calculations."
         },
-        "description": "Select the tariff for your home."
-      },
-      "user": {
-        "data": {
-          "api_key": "[%key:common::config_flow::data::api_key%]"
-        },
-        "data_description": {
-          "api_key": "Your Engrate API key for accessing tariff data."
-        },
-        "description": "Enter your Engrate API key to connect. You can sign up and create an API key at [console.engrate.io]({console_url})."
+        "description": "Select the tariff applicable for the grid connection. For more information, see the [system operator page]({system_operator_url}) in the Engrate console."
       }
     }
   },
   "entity": {
     "sensor": {
       "grid_cost": {
-        "name": "Grid cost"
+        "name": "Year-to-date grid cost"
       }
     }
   }

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 from homeassistant import config_entries
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
+    CONF_COUNTRY,
     CONF_DATASETS,
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
@@ -19,12 +20,19 @@ from tests.common import MockConfigEntry
 
 
 async def test_user_flow_full(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
-    """Test full flow: API key → system operator → tariff → datasets."""
+    """Test full flow: country → API key → system operator → tariff → datasets."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "select_country"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "api_key"
     assert result["errors"] == {}
 
     with patch(
@@ -69,6 +77,7 @@ async def test_user_flow_full(hass: HomeAssistant, mock_setup_entry: AsyncMock) 
     assert result["title"] == "Säkringsabonnemang - 20 A"
     assert result["data"] == {
         CONF_API_KEY: "test-api-key",
+        CONF_COUNTRY: "SE",
         CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
         CONF_TARIFF_ID: "tariff-uuid-1",
         CONF_DATASETS: {"quarter-hourly-energy-offtake": "sensor.energy_meter"},
@@ -83,6 +92,11 @@ async def test_user_flow_with_injection(
     """Test flow with a tariff that requires both offtake and injection."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
     )
 
     with patch(
@@ -137,6 +151,11 @@ async def test_user_flow_invalid_auth(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
     with patch(
         "homeassistant.components.engrate.config_flow.EngrateApiClient",
     ) as mock_client_class:
@@ -183,6 +202,11 @@ async def test_user_flow_cannot_connect(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
     with patch(
         "homeassistant.components.engrate.config_flow.EngrateApiClient",
     ) as mock_client_class:
@@ -211,6 +235,11 @@ async def test_user_flow_no_system_operators(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
 
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
     with patch(
         "homeassistant.components.engrate.config_flow.EngrateApiClient",
     ) as mock_client_class:
@@ -232,6 +261,11 @@ async def test_user_flow_no_tariffs(
     """Test abort when no tariffs are found for operator."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
     )
 
     with patch(
@@ -269,16 +303,13 @@ async def test_user_flow_already_configured(
         unique_id="tariff-uuid-1",
         data={
             CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
             CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
             CONF_TARIFF_ID: "tariff-uuid-1",
             CONF_DATASETS: {},
         },
     )
     entry.add_to_hass(hass)
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
 
     with patch(
         "homeassistant.components.engrate.config_flow.EngrateApiClient",
@@ -289,10 +320,13 @@ async def test_user_flow_already_configured(
         )
         client.async_list_tariffs = AsyncMock(return_value=MOCK_TARIFFS)
 
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {CONF_API_KEY: "test-api-key"},
+        # Pre-fill skips country and API key steps, goes to system operator
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "select_system_operator"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -314,6 +348,11 @@ async def test_user_flow_with_spot_price_dataset(
     """Test flow where tariff requires a spot price dataset."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
     )
 
     tariffs_with_spot = [*MOCK_TARIFFS, MOCK_TARIFF_WITH_SPOT_PRICE]
@@ -388,3 +427,40 @@ async def test_reconfigure_flow(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
+
+
+async def test_user_flow_prefills_from_existing_entry(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test that adding a second tariff reuses the API key from the first entry."""
+    # Create an existing entry
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "existing-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    existing.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            return_value=MOCK_SYSTEM_OPERATORS
+        )
+        client.async_list_tariffs = AsyncMock(return_value=MOCK_TARIFFS)
+
+        # Starting the flow should skip API key step and go to system operator
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+    # Should skip directly to select_system_operator
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "select_system_operator"

@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.components.recorder.models import (
+    StatisticData,
+    StatisticMeanType,
+    StatisticMetaData,
+)
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    statistics_during_period,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util, slugify
 
 from .api import EngrateApiAuthError, EngrateApiClient, EngrateApiConnectionError
 from .const import (
@@ -31,16 +40,14 @@ class EngrateTariffData:
 
     tariff_id: str
     tariff_name: str
-    tariff_summary: str | None
-    tariff_annotations: str | None
     tariff_raw: dict[str, Any]
     system_operator_name: str | None
-    system_operator_description: str | None
-    system_operator_logo_url: str | None
     grid_cost: float | None
+    component_costs: list[dict[str, Any]]
     last_calculated: datetime | None
     period_start: datetime | None
     period_end: datetime | None
+    statistic_id: str
 
 
 def _compute_update_interval(entry_id: str) -> timedelta:
@@ -53,10 +60,10 @@ def _compute_update_interval(entry_id: str) -> timedelta:
     return timedelta(minutes=55 + offset)
 
 
-def _month_start_local() -> datetime:
-    """Return the 1st of the current month in the local timezone."""
+def _year_start_local() -> datetime:
+    """Return January 1st of the current year in the local timezone."""
     now = dt_util.now()
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 def _build_quarter_hourly_series(
@@ -102,6 +109,50 @@ def _build_quarter_hourly_series(
     return quarter_hourly
 
 
+def _aggregate_hourly_costs(
+    components: list[dict[str, Any]],
+) -> dict[datetime, float]:
+    """Aggregate quarter-hourly cost data points into hourly buckets.
+
+    Sums cost values across all tariff components, grouped by the
+    clock hour each data point falls into.
+    Returns a dict mapping hour-start datetimes (UTC) to total cost.
+    """
+    hourly: dict[datetime, float] = defaultdict(float)
+    for component in components:
+        for dataset in component.get("datasets", []):
+            if dataset.get("name") != "cost":
+                continue
+            for point in dataset.get("data", []):
+                ts = dt_util.parse_datetime(point["timestamp"])
+                if ts is None:
+                    continue
+                hour_start = dt_util.as_utc(ts).replace(
+                    minute=0, second=0, microsecond=0
+                )
+                hourly[hour_start] += point.get("value", 0.0)
+    return dict(hourly)
+
+
+def _compute_component_costs(
+    components: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compute per-component total cost from the API response.
+
+    Returns a list of dicts with 'name' and 'cost' for each tariff component.
+    """
+    result: list[dict[str, Any]] = []
+    for component in components:
+        total = 0.0
+        for dataset in component.get("datasets", []):
+            if dataset.get("name") != "cost":
+                continue
+            for point in dataset.get("data", []):
+                total += point.get("value", 0.0)
+        result.append({"name": component.get("name", "Unknown"), "cost": total})
+    return result
+
+
 class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
     """Engrate data update coordinator."""
 
@@ -122,6 +173,8 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             update_interval=_compute_update_interval(config_entry.entry_id),
         )
         self.client = client
+        tariff_slug = slugify(config_entry.title)
+        self.statistic_id = f"{DOMAIN}:grid_cost_{tariff_slug}"
 
     async def _async_update_data(self) -> EngrateTariffData:
         """Fetch tariff data and calculate costs from recorder history."""
@@ -141,44 +194,42 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         )
 
         now = dt_util.now()
-        period_start = _month_start_local()
+        period_start = _year_start_local()
         period_end = now
 
-        grid_cost = await self._calculate_grid_cost(
+        grid_cost, hourly_costs, component_costs = await self._calculate_grid_cost(
             tariff_id,
             configured_datasets,
             period_start,
             period_end,
         )
 
+        if hourly_costs:
+            self._import_cost_statistics(hourly_costs)
+
         last_calculated = dt_util.utcnow()
 
         LOGGER.debug(
-            "Update complete: grid_cost=%s, period=%s to %s",
+            "Update complete: grid_cost=%s, period=%s to %s, hours=%d",
             grid_cost,
-            period_start.isoformat() if period_start else None,
-            period_end.isoformat() if period_end else None,
+            period_start.isoformat(),
+            period_end.isoformat(),
+            len(hourly_costs) if hourly_costs else 0,
         )
 
         return EngrateTariffData(
             tariff_id=tariff["id"],
             tariff_name=tariff["name"],
-            tariff_summary=tariff.get("summary"),
-            tariff_annotations=tariff.get("annotations"),
             tariff_raw=tariff,
             system_operator_name=(
                 system_operator.get("name") if system_operator else None
             ),
-            system_operator_description=(
-                system_operator.get("description") if system_operator else None
-            ),
-            system_operator_logo_url=(
-                system_operator.get("logo_url") if system_operator else None
-            ),
             grid_cost=grid_cost,
+            component_costs=component_costs,
             last_calculated=last_calculated,
             period_start=period_start,
             period_end=period_end,
+            statistic_id=self.statistic_id,
         )
 
     async def _query_stats(
@@ -211,16 +262,16 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         configured_datasets: dict[str, str],
         period_start: datetime,
         period_end: datetime,
-    ) -> float | None:
+    ) -> tuple[float | None, dict[datetime, float] | None, list[dict[str, Any]]]:
         """Calculate grid cost for the full period using recorder history.
 
-        Queries hourly statistics for each configured dataset entity,
-        expands to quarter-hourly intervals, and sends to the Engrate
-        calculate API.
+        Returns a tuple of (total_cost, hourly_cost_breakdown, component_costs).
+        The hourly breakdown maps hour-start datetimes to cost values,
+        used for importing external statistics.
         """
         if not configured_datasets:
             LOGGER.debug("No configured datasets, skipping grid cost calculation")
-            return None
+            return None, None, []
 
         start_iso = dt_util.as_utc(period_start).isoformat()
         end_iso = dt_util.as_utc(period_end).isoformat()
@@ -249,17 +300,52 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             )
         except Exception:  # noqa: BLE001
             LOGGER.warning("Failed to calculate tariff costs")
-            return self.data.grid_cost if self.data else None
+            prev_cost = self.data.grid_cost if self.data else None
+            prev_components = self.data.component_costs if self.data else []
+            return prev_cost, None, prev_components
 
-        # Sum all cost values across all components
-        total = 0.0
-        for component in components:
-            for dataset in component.get("datasets", []):
-                if dataset.get("name") == "cost":
-                    for point in dataset.get("data", []):
-                        total += point.get("value", 0.0)
+        hourly_costs = _aggregate_hourly_costs(components)
+        total = sum(hourly_costs.values())
+        component_costs = _compute_component_costs(components)
 
-        return total
+        return total, hourly_costs, component_costs
+
+    def _import_cost_statistics(
+        self,
+        hourly_costs: dict[datetime, float],
+    ) -> None:
+        """Import hourly cost data as external statistics.
+
+        Each hour's cost is stored as `state` (the cost for that hour)
+        and `sum` (cumulative cost from the start of the year).
+        Re-importing overwrites previous values, allowing retroactive
+        correction when tariff calculations redistribute costs.
+        """
+        metadata = StatisticMetaData(
+            mean_type=StatisticMeanType.NONE,
+            has_sum=True,
+            name=f"Engrate {self.config_entry.title}",
+            source=DOMAIN,
+            statistic_id=self.statistic_id,
+            unit_of_measurement=self.hass.config.currency,
+            unit_class=None,
+        )
+
+        cumulative = 0.0
+        statistics: list[StatisticData] = []
+        for hour_start in sorted(hourly_costs):
+            hourly_value = hourly_costs[hour_start]
+            cumulative += hourly_value
+            statistics.append(
+                StatisticData(
+                    start=hour_start,
+                    state=hourly_value,
+                    sum=cumulative,
+                )
+            )
+
+        if statistics:
+            async_add_external_statistics(self.hass, metadata, statistics)
 
     async def _resolve_system_operator(
         self, tariff: dict[str, Any]

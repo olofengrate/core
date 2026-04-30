@@ -8,6 +8,7 @@ LOGGER = getLogger(__package__)
 API_BASE_URL = "https://api.engrate.io"
 
 CONF_API_KEY = "api_key"
+CONF_COUNTRY = "country"
 CONF_SYSTEM_OPERATOR_ID = "system_operator_id"
 CONF_TARIFF_ID = "tariff_id"
 CONF_DATASETS = "datasets"

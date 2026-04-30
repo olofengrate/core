@@ -103,11 +103,11 @@ async def test_coordinator_data_structure(
     data: EngrateTariffData = mock_config_entry.runtime_data.data
     assert data.tariff_id == "tariff-uuid-1"
     assert data.tariff_name == "Säkringsabonnemang - 20 A"
-    assert data.tariff_summary == "Fuse-based tariff for 20A."
     assert data.system_operator_name == "Ellevio AB"
-    assert data.system_operator_description == "A major Swedish DSO."
-    assert data.system_operator_logo_url == "https://example.com/logo.png"
-    # Period is always the current calendar month
+    assert data.statistic_id == "engrate:grid_cost_sakringsabonnemang_20_a"
+    assert isinstance(data.component_costs, list)
+    assert data.tariff_raw is not None
+    # Period is always the current calendar year
     assert data.period_start is not None
     assert data.period_end is not None
     assert isinstance(data.period_start, datetime)
@@ -134,33 +134,6 @@ async def test_coordinator_no_system_operator(
     data: EngrateTariffData = mock_config_entry.runtime_data.data
     assert data.tariff_name == "Säkringsabonnemang - 20 A"
     assert data.system_operator_name is None
-    assert data.system_operator_logo_url is None
-
-
-async def test_cost_sensor_created(
-    hass: HomeAssistant,
-    mock_config_entry: MockConfigEntry,
-    mock_engrate_client: AsyncMock,
-    mock_recorder: MagicMock,
-) -> None:
-    """Test that the cost sensor entity is created."""
-    mock_config_entry.add_to_hass(hass)
-
-    with patch(
-        "homeassistant.components.engrate.EngrateApiClient",
-        return_value=mock_engrate_client,
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
-
-    state = hass.states.get("sensor.engrate_grid_cost")
-    assert state is not None
-    assert state.attributes["device_class"] == "monetary"
-    assert state.attributes["state_class"] == "total"
-
-    # Verify energy/total cost sensors are NOT created
-    assert hass.states.get("sensor.engrate_energy_cost") is None
-    assert hass.states.get("sensor.engrate_total_cost") is None
 
 
 async def test_cost_from_recorder(
@@ -172,14 +145,14 @@ async def test_cost_from_recorder(
     """Test that grid cost is calculated from recorder statistics."""
 
     def _stats_side_effect(
-        _hass,
-        start,
-        end,
-        statistic_ids,
-        period,
-        units,
-        types,
-    ):
+        _hass: HomeAssistant,
+        start: datetime,
+        end: datetime,
+        statistic_ids: set[str],
+        period: str,
+        units: dict[str, str] | None,
+        types: set[str],
+    ) -> dict[str, list[dict]]:
         entity_id = next(iter(statistic_ids))
         if entity_id == "sensor.energy_meter":
             return {entity_id: MOCK_HOURLY_STATS_ENERGY}
@@ -199,6 +172,7 @@ async def test_cost_from_recorder(
     coordinator = mock_config_entry.runtime_data
     # Grid cost comes from the calculate API mock (0.54)
     assert coordinator.data.grid_cost == 0.54
+    assert coordinator.data.component_costs == [{"name": "Energiskatt", "cost": 0.54}]
     assert coordinator.data.last_calculated is not None
     assert coordinator.data.period_start is not None
     assert isinstance(coordinator.data.period_start, datetime)
@@ -226,3 +200,38 @@ async def test_cost_no_recorder_data(
     # Missing recorder data is filled with 0s, API still called
     assert coordinator.data.grid_cost == 0.54
     mock_engrate_client.async_calculate_tariff.assert_called_once()
+
+
+async def test_external_statistics_imported(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_engrate_client: AsyncMock,
+    mock_recorder: MagicMock,
+) -> None:
+    """Test that external statistics are imported with correct hourly data."""
+    mock_config_entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "homeassistant.components.engrate.EngrateApiClient",
+            return_value=mock_engrate_client,
+        ),
+        patch(
+            "homeassistant.components.engrate.coordinator.async_add_external_statistics"
+        ) as mock_import,
+    ):
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    mock_import.assert_called_once()
+    metadata = mock_import.call_args[0][1]
+    statistics = mock_import.call_args[0][2]
+
+    assert metadata["source"] == "engrate"
+    assert metadata["statistic_id"].startswith("engrate:grid_cost_")
+    assert metadata["has_sum"] is True
+    assert len(statistics) > 0
+    # First stat should have state and cumulative sum
+    assert "state" in statistics[0]
+    assert "sum" in statistics[0]
+    assert "start" in statistics[0]
