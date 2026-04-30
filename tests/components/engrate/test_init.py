@@ -3,7 +3,10 @@
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from homeassistant.components.engrate.api import EngrateApiConnectionError
+from homeassistant.components.engrate.api import (
+    EngrateApiAuthError,
+    EngrateApiConnectionError,
+)
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
     CONF_COUNTRY,
@@ -574,3 +577,226 @@ async def test_system_operator_cached_across_updates(
     # Still only called once — cached
     assert mock_engrate_client.async_resolve_system_operator.call_count == 1
     assert coordinator.data.system_operator_name == MOCK_PARTY["name"]
+
+
+async def test_setup_entry_auth_error_triggers_reauth(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_engrate_client: AsyncMock,
+    mock_recorder: MagicMock,
+) -> None:
+    """Test that auth error during update triggers reauth flow."""
+    mock_engrate_client.async_get_tariff.side_effect = EngrateApiAuthError(
+        "Invalid API key"
+    )
+
+    mock_config_entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.EngrateApiClient",
+        return_value=mock_engrate_client,
+    ):
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    # ConfigEntryAuthFailed → SETUP_ERROR with reauth flow
+    assert mock_config_entry.state is ConfigEntryState.SETUP_ERROR
+    flows = hass.config_entries.flow.async_progress()
+    assert any(f["handler"] == DOMAIN for f in flows)
+
+
+async def test_calculate_tariff_api_failure_uses_previous_data(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_engrate_client: AsyncMock,
+    mock_recorder: MagicMock,
+) -> None:
+    """Test that API calculation failure falls back to previous cost."""
+    mock_config_entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.EngrateApiClient",
+        return_value=mock_engrate_client,
+    ):
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = mock_config_entry.runtime_data
+    assert coordinator.data.grid_cost == 0.54
+
+    # Now make calculate fail
+    mock_engrate_client.async_calculate_tariff.side_effect = RuntimeError("API down")
+
+    with patch(
+        "homeassistant.components.engrate.EngrateApiClient",
+        return_value=mock_engrate_client,
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    # Should keep previous cost
+    assert coordinator.data.grid_cost == 0.54
+
+
+async def test_no_datasets_skips_calculation(
+    hass: HomeAssistant,
+    mock_engrate_client: AsyncMock,
+    mock_recorder: MagicMock,
+) -> None:
+    """Test coordinator with no configured datasets skips calculation."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-empty",
+        title="Empty tariff",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.EngrateApiClient",
+        return_value=mock_engrate_client,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data
+    assert coordinator.data.grid_cost is None
+    mock_engrate_client.async_calculate_tariff.assert_not_called()
+
+
+async def test_yearly_dataset_with_unavailable_state(
+    hass: HomeAssistant,
+    mock_engrate_client: AsyncMock,
+    mock_recorder: MagicMock,
+) -> None:
+    """Test that yearly datasets fall back to 0 for unavailable entity states."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-4",
+        title="Capacity tariff",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-4",
+            CONF_DATASETS: {
+                "quarter-hourly-energy-offtake": "sensor.energy_meter",
+                "hourly-available-conditional-offtake-capacity": "sensor.capacity",
+                "yearly-firm-subscribed-offtake-capacity": "sensor.subscribed_capacity",
+            },
+        },
+    )
+
+    mock_engrate_client.async_get_tariff.return_value = MOCK_TARIFF_WITH_CAPACITY
+
+    def _stats_side_effect(
+        _hass: HomeAssistant,
+        start: datetime,
+        end: datetime,
+        statistic_ids: set[str],
+        period: str,
+        units: dict[str, str] | None,
+        types: set[str],
+    ) -> dict[str, list[dict]]:
+        entity_id = next(iter(statistic_ids))
+        if entity_id == "sensor.capacity":
+            return {entity_id: MOCK_HOURLY_STATS_CAPACITY}
+        if entity_id == "sensor.energy_meter":
+            return {entity_id: MOCK_HOURLY_STATS_ENERGY}
+        return {}
+
+    mock_recorder.side_effect = _stats_side_effect
+
+    # Set the yearly entity to unavailable
+    hass.states.async_set("sensor.subscribed_capacity", "unavailable")
+
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.EngrateApiClient",
+        return_value=mock_engrate_client,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    call_args = mock_engrate_client.async_calculate_tariff.call_args
+    api_datasets = call_args.kwargs.get("datasets") or call_args[1].get("datasets")
+
+    yearly_ds = next(
+        d
+        for d in api_datasets
+        if d["name"] == "yearly-firm-subscribed-offtake-capacity"
+    )
+    assert yearly_ds["data"][0]["value"] == 0.0
+
+
+async def test_yearly_dataset_with_non_numeric_state(
+    hass: HomeAssistant,
+    mock_engrate_client: AsyncMock,
+    mock_recorder: MagicMock,
+) -> None:
+    """Test that yearly datasets fall back to 0 for non-numeric entity states."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-4",
+        title="Capacity tariff",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-4",
+            CONF_DATASETS: {
+                "quarter-hourly-energy-offtake": "sensor.energy_meter",
+                "hourly-available-conditional-offtake-capacity": "sensor.capacity",
+                "yearly-firm-subscribed-offtake-capacity": "sensor.subscribed_capacity",
+            },
+        },
+    )
+
+    mock_engrate_client.async_get_tariff.return_value = MOCK_TARIFF_WITH_CAPACITY
+
+    def _stats_side_effect(
+        _hass: HomeAssistant,
+        start: datetime,
+        end: datetime,
+        statistic_ids: set[str],
+        period: str,
+        units: dict[str, str] | None,
+        types: set[str],
+    ) -> dict[str, list[dict]]:
+        entity_id = next(iter(statistic_ids))
+        if entity_id == "sensor.capacity":
+            return {entity_id: MOCK_HOURLY_STATS_CAPACITY}
+        if entity_id == "sensor.energy_meter":
+            return {entity_id: MOCK_HOURLY_STATS_ENERGY}
+        return {}
+
+    mock_recorder.side_effect = _stats_side_effect
+
+    # Set the yearly entity to a non-numeric value
+    hass.states.async_set("sensor.subscribed_capacity", "not_a_number")
+
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.EngrateApiClient",
+        return_value=mock_engrate_client,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    call_args = mock_engrate_client.async_calculate_tariff.call_args
+    api_datasets = call_args.kwargs.get("datasets") or call_args[1].get("datasets")
+
+    yearly_ds = next(
+        d
+        for d in api_datasets
+        if d["name"] == "yearly-firm-subscribed-offtake-capacity"
+    )
+    assert yearly_ds["data"][0]["value"] == 0.0

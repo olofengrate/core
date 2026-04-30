@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import re
 from typing import Any
 
@@ -311,6 +312,47 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_TARIFF_ID: self._tariff["id"],
                 CONF_DATASETS: datasets,
             },
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle reauthentication."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reauth confirmation — re-prompt for API key."""
+        reauth_entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            api_key = user_input[CONF_API_KEY]
+            session = async_get_clientsession(self.hass)
+            client = EngrateApiClient(session, api_key)
+            try:
+                await client.async_list_system_operators(
+                    country=reauth_entry.data.get(CONF_COUNTRY, "SE")
+                )
+            except EngrateApiAuthError:
+                errors["base"] = "invalid_auth"
+            except EngrateApiConnectionError:
+                errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Unexpected exception during reauth")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    reauth_entry,
+                    data_updates={CONF_API_KEY: api_key},
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            errors=errors,
+            description_placeholders={"console_url": "https://console.engrate.io/"},
         )
 
     async def async_step_reconfigure(

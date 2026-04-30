@@ -2,8 +2,13 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from homeassistant import config_entries
-from homeassistant.components.engrate.api import EngrateApiConnectionError
+from homeassistant.components.engrate.api import (
+    EngrateApiAuthError,
+    EngrateApiConnectionError,
+)
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
     CONF_COUNTRY,
@@ -602,3 +607,360 @@ async def test_user_flow_prefills_from_existing_entry(
     # Should skip directly to select_system_operator
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "select_system_operator"
+
+
+async def test_reauth_flow(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+) -> None:
+    """Test reauth flow succeeds with valid API key."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "old-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            return_value=MOCK_SYSTEM_OPERATORS
+        )
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "new-api-key"},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_API_KEY] == "new-api-key"
+
+
+@pytest.mark.parametrize(
+    ("side_effect", "error_key"),
+    [
+        (EngrateApiAuthError("Invalid"), "invalid_auth"),
+        (EngrateApiConnectionError("Timeout"), "cannot_connect"),
+        (RuntimeError("Unexpected"), "unknown"),
+    ],
+)
+async def test_reauth_flow_errors_and_recovery(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    side_effect: Exception,
+    error_key: str,
+) -> None:
+    """Test reauth flow handles errors and allows recovery."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "old-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(side_effect=side_effect)
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "new-api-key"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": error_key}
+
+    # Recover with valid key
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            return_value=MOCK_SYSTEM_OPERATORS
+        )
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "new-api-key"},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+
+
+async def test_user_flow_existing_entry_auth_error_falls_through(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test that auth error with existing entry falls through to country selection."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "bad-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    existing.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            side_effect=EngrateApiAuthError("Invalid")
+        )
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "select_country"
+
+
+async def test_api_key_step_unknown_error(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test API key step handles unknown exceptions."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            side_effect=RuntimeError("Unexpected")
+        )
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "test-key"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "unknown"}
+
+
+async def test_select_system_operator_connection_error(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test system operator step aborts on connection error when listing tariffs."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            return_value=MOCK_SYSTEM_OPERATORS
+        )
+        client.async_list_tariffs = AsyncMock(
+            side_effect=EngrateApiConnectionError("Timeout")
+        )
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "test-key"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_SYSTEM_OPERATOR_ID: "party-uuid-1"},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "cannot_connect"
+
+
+async def test_select_system_operator_unknown_error(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test system operator step aborts on unknown error."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            return_value=MOCK_SYSTEM_OPERATORS
+        )
+        client.async_list_tariffs = AsyncMock(side_effect=RuntimeError("Unexpected"))
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "test-key"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_SYSTEM_OPERATOR_ID: "party-uuid-1"},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "unknown"
+
+
+async def test_select_system_operator_no_tariffs(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test system operator step aborts when no tariffs found."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_COUNTRY: "SE"},
+    )
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_system_operators = AsyncMock(
+            return_value=MOCK_SYSTEM_OPERATORS
+        )
+        client.async_list_tariffs = AsyncMock(return_value=[])
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "test-key"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_SYSTEM_OPERATOR_ID: "party-uuid-1"},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_tariffs"
+
+
+async def test_reconfigure_flow_list_tariffs_connection_error(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test reconfigure flow aborts when listing tariffs fails."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_tariffs = AsyncMock(
+            side_effect=EngrateApiConnectionError("Timeout")
+        )
+
+        result = await entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "cannot_connect"
+
+
+async def test_reconfigure_flow_list_tariffs_unknown_error(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test reconfigure flow aborts on unknown error when listing tariffs."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_tariffs = AsyncMock(side_effect=RuntimeError("Unexpected"))
+
+        result = await entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "unknown"
+
+
+async def test_reconfigure_flow_no_tariffs(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test reconfigure flow aborts when no tariffs found."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_tariffs = AsyncMock(return_value=[])
+
+        result = await entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_tariffs"

@@ -5,6 +5,7 @@
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "no_system_operators": "No system operators found.",
       "no_tariffs": "No tariffs found",
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
       "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
@@ -53,6 +54,15 @@
           "yearly-firm-subscribed-offtake-capacity": "Yearly firm (prima) subscribed power offtake capacity (kW)."
         },
         "description": "The selected tariff requires the following data sources. For more information, see the [Engrate documentation]({datasets_docs_url})."
+      },
+      "reauth_confirm": {
+        "data": {
+          "api_key": "[%key:common::config_flow::data::api_key%]"
+        },
+        "data_description": {
+          "api_key": "[%key:component::engrate::config::step::api_key::data_description::api_key%]"
+        },
+        "description": "Your API key is no longer valid. Enter a new API key to reconnect. You can manage API keys at [console.engrate.io]({console_url})."
       },
       "reconfigure": {
         "data": {
@@ -128,6 +138,14 @@
       "grid_cost": {
         "name": "Year-to-date grid cost"
       }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Authentication failed. Please reauthenticate the integration."
+    },
+    "connection_error": {
+      "message": "Error communicating with Engrate API: {error}"
     }
   }
 }

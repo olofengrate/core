@@ -1,0 +1,9 @@
+{
+  "entity": {
+    "sensor": {
+      "grid_cost": {
+        "default": "mdi:transmission-tower"
+      }
+    }
+  }
+}

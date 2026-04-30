@@ -20,6 +20,7 @@ from homeassistant.components.recorder.statistics import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util, slugify
@@ -238,9 +239,16 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         try:
             tariff = await self.client.async_get_tariff(tariff_id)
         except EngrateApiAuthError as err:
-            raise UpdateFailed(f"Authentication failed: {err}") from err
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN,
+                translation_key="auth_failed",
+            ) from err
         except EngrateApiConnectionError as err:
-            raise UpdateFailed(f"Connection error: {err}") from err
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="connection_error",
+                translation_placeholders={"error": str(err)},
+            ) from err
 
         # Resolve system operator once, then cache
         if self._cached_system_operator is UNDEFINED:
