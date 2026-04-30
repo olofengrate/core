@@ -1,5 +1,6 @@
 """Test the Engrate sensor platform."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import HomeAssistant
@@ -50,7 +51,8 @@ async def test_grid_cost_sensor_attributes(
     state = hass.states.get("sensor.fuse_subscription_20_a_year_to_date_grid_cost")
     assert state is not None
     # Component cost from mock: Energy tax = 0.54
-    assert state.attributes["Energy tax"] == 0.54
+    component_costs = json.loads(state.attributes["component_costs"])
+    assert component_costs == [{"name": "Energy tax", "cost": 0.54}]
     assert "period_start" in state.attributes
     assert "period_end" in state.attributes
     assert "last_calculated" in state.attributes

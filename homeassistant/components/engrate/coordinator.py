@@ -20,6 +20,7 @@ from homeassistant.components.recorder.statistics import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import UNDEFINED, UndefinedType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util, slugify
 
@@ -27,13 +28,6 @@ from .api import EngrateApiAuthError, EngrateApiClient, EngrateApiConnectionErro
 from .const import CONF_DATASETS, CONF_TARIFF_ID, DOMAIN, LOGGER, PRICE_DATASET_IDS
 
 type EngrateConfigEntry = ConfigEntry[EngrateCoordinator]
-
-
-class _Sentinel:
-    """Sentinel type for unset cache values."""
-
-
-_UNSET = _Sentinel()
 
 
 @dataclass
@@ -58,7 +52,7 @@ def _compute_update_interval(entry_id: str) -> timedelta:
     Returns an interval between 55 and 65 minutes, determined
     by the config entry ID for consistency across restarts.
     """
-    offset = hash(entry_id) % 11
+    offset = int.from_bytes(entry_id[:4].encode(), "big") % 11
     return timedelta(minutes=55 + offset)
 
 
@@ -234,7 +228,8 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         self.client = client
         tariff_slug = slugify(config_entry.title)
         self.statistic_id = f"{DOMAIN}:grid_cost_{tariff_slug}"
-        self._cached_system_operator: dict[str, Any] | None | _Sentinel = _UNSET
+        self._cached_system_operator: dict[str, Any] | None | UndefinedType = UNDEFINED
+        self._last_imported_costs: dict[datetime, float] = {}
 
     async def _async_update_data(self) -> EngrateTariffData:
         """Fetch tariff data and calculate costs from recorder history."""
@@ -248,13 +243,11 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             raise UpdateFailed(f"Connection error: {err}") from err
 
         # Resolve system operator once, then cache
-        if isinstance(self._cached_system_operator, _Sentinel):
+        if self._cached_system_operator is UNDEFINED:
             self._cached_system_operator = await self._resolve_system_operator(tariff)
         system_operator = self._cached_system_operator
 
-        configured_datasets: dict[str, str] = self.config_entry.data.get(
-            CONF_DATASETS, {}
-        )
+        configured_datasets: dict[str, str] = self.config_entry.data[CONF_DATASETS]
 
         now = dt_util.now()
         period_start = _year_start_local()
@@ -348,11 +341,13 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             if resolution is DatasetResolution.YEARLY:
                 # Yearly datasets are static scalars — read current entity state
                 state = self.hass.states.get(entity_id)
-                value = (
-                    float(state.state)
-                    if state and state.state not in (None, "unknown", "unavailable")
-                    else 0.0
-                )
+                if state and state.state not in (None, "unknown", "unavailable"):
+                    try:
+                        value = float(state.state)
+                    except ValueError:
+                        value = 0.0
+                else:
+                    value = 0.0
                 data_points = [
                     {
                         "timestamp": dt_util.as_utc(period_start).isoformat(),
@@ -405,9 +400,25 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
 
         Each hour's cost is stored as `state` (the cost for that hour)
         and `sum` (cumulative cost from the start of the year).
-        Re-importing overwrites previous values, allowing retroactive
-        correction when tariff calculations redistribute costs.
+        Only hours that are new or changed since the last import are sent,
+        along with all subsequent hours (since cumulative sums shift).
         """
+        # Find the first hour that differs from the previous import
+        sorted_hours = sorted(hourly_costs)
+        first_changed_idx = len(sorted_hours)
+        for idx, hour_start in enumerate(sorted_hours):
+            prev = self._last_imported_costs.get(hour_start)
+            if prev is None or prev != hourly_costs[hour_start]:
+                first_changed_idx = idx
+                break
+
+        # Also check if hours were removed (fewer hours than before)
+        if len(hourly_costs) < len(self._last_imported_costs):
+            first_changed_idx = 0
+
+        if first_changed_idx >= len(sorted_hours):
+            return  # Nothing changed
+
         metadata = StatisticMetaData(
             mean_type=StatisticMeanType.NONE,
             has_sum=True,
@@ -418,21 +429,25 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             unit_class=None,
         )
 
+        # Compute cumulative sum from the start of the year
         cumulative = 0.0
         statistics: list[StatisticData] = []
-        for hour_start in sorted(hourly_costs):
+        for idx, hour_start in enumerate(sorted_hours):
             hourly_value = hourly_costs[hour_start]
             cumulative += hourly_value
-            statistics.append(
-                StatisticData(
-                    start=hour_start,
-                    state=hourly_value,
-                    sum=cumulative,
+            if idx >= first_changed_idx:
+                statistics.append(
+                    StatisticData(
+                        start=hour_start,
+                        state=hourly_value,
+                        sum=cumulative,
+                    )
                 )
-            )
 
         if statistics:
             async_add_external_statistics(self.hass, metadata, statistics)
+
+        self._last_imported_costs = dict(hourly_costs)
 
     async def _resolve_system_operator(
         self, tariff: dict[str, Any]

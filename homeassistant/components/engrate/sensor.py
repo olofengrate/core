@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
@@ -29,7 +30,7 @@ class EngrateGridCostSensor(CoordinatorEntity[EngrateCoordinator], SensorEntity)
     _attr_has_entity_name = True
     _attr_translation_key = "grid_cost"
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_icon = "mdi:cash-multiple"
+    _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: EngrateCoordinator) -> None:
         """Initialize the grid cost sensor."""
@@ -57,8 +58,8 @@ class EngrateGridCostSensor(CoordinatorEntity[EngrateCoordinator], SensorEntity)
         """Return component cost breakdown and period metadata."""
         data = self.coordinator.data
         attrs: dict[str, Any] = {}
-        for comp in data.component_costs:
-            attrs[comp["name"]] = comp["cost"]
+        if data.component_costs:
+            attrs["component_costs"] = json.dumps(data.component_costs)
         if data.period_start:
             attrs["period_start"] = data.period_start.isoformat()
         if data.period_end:

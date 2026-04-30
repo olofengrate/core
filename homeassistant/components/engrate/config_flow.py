@@ -40,9 +40,6 @@ from .const import (
     POWER_DATASET_IDS,
 )
 
-# Energy cost dataset IDs (should not appear in configure_datasets step)
-# These are auto-detected from the tariff definition
-
 
 def _natural_sort_key(text: str) -> list[str | int]:
     """Generate a sort key that sorts embedded numbers numerically."""
@@ -84,7 +81,6 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
         self._tariffs: list[dict[str, Any]] = []
         self._tariff: dict[str, Any] | None = None
         self._required_datasets: list[dict[str, Any]] = []
-        self._datasets: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
