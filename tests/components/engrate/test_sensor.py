@@ -30,6 +30,7 @@ async def test_grid_cost_sensor_state(
     state = hass.states.get("sensor.fuse_subscription_20_a_year_to_date_grid_cost")
     assert state is not None
     assert float(state.state) == 0.54
+    assert state.attributes["unit_of_measurement"] == "SEK"
 
 
 async def test_grid_cost_sensor_attributes(

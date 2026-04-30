@@ -52,8 +52,8 @@ class EngrateGridCostSensor(CoordinatorEntity[EngrateCoordinator], SensorEntity)
 
     @property
     def native_unit_of_measurement(self) -> str:
-        """Return the currency from HA config."""
-        return self.hass.config.currency
+        """Return the currency from the tariff."""
+        return self.coordinator.data.currency
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

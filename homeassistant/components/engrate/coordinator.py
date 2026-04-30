@@ -39,6 +39,7 @@ class EngrateTariffData:
     tariff_name: str
     tariff_raw: dict[str, Any]
     system_operator_name: str | None
+    currency: str
     grid_cost: float | None
     component_costs: list[dict[str, Any]]
     last_calculated: datetime | None
@@ -281,6 +282,11 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             len(hourly_costs) if hourly_costs else 0,
         )
 
+        # Extract currency from the first tariff component's cost unit
+        currency = "SEK"
+        if tariff.get("tariff_components"):
+            currency = tariff["tariff_components"][0]["cost"].get("unit", "SEK")
+
         return EngrateTariffData(
             tariff_id=tariff["id"],
             tariff_name=tariff["name"],
@@ -288,6 +294,7 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
             system_operator_name=(
                 system_operator.get("name") if system_operator else None
             ),
+            currency=currency,
             grid_cost=grid_cost,
             component_costs=component_costs,
             last_calculated=last_calculated,
