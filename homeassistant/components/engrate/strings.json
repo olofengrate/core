@@ -2,8 +2,10 @@
   "config": {
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "no_system_operators": "No system operators found.",
       "no_tariffs": "No tariffs found",
+      "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "error": {
@@ -60,6 +62,37 @@
           "tariff_id": "The tariff to use for grid cost calculations."
         },
         "description": "Select a different tariff."
+      },
+      "reconfigure_datasets": {
+        "data": {
+          "hourly-available-conditional-injection-capacity": "hourly-available-conditional-injection-capacity",
+          "hourly-available-conditional-offtake-capacity": "hourly-available-conditional-offtake-capacity",
+          "quarter-hourly-day-ahead-price-se1": "quarter-hourly-day-ahead-price-se1",
+          "quarter-hourly-day-ahead-price-se2": "quarter-hourly-day-ahead-price-se2",
+          "quarter-hourly-day-ahead-price-se3": "quarter-hourly-day-ahead-price-se3",
+          "quarter-hourly-day-ahead-price-se4": "quarter-hourly-day-ahead-price-se4",
+          "quarter-hourly-energy-injection": "quarter-hourly-energy-injection",
+          "quarter-hourly-energy-offtake": "quarter-hourly-energy-offtake",
+          "yearly-conditional-subscribed-injection-capacity": "yearly-conditional-subscribed-injection-capacity",
+          "yearly-conditional-subscribed-offtake-capacity": "yearly-conditional-subscribed-offtake-capacity",
+          "yearly-firm-subscribed-injection-capacity": "yearly-firm-subscribed-injection-capacity",
+          "yearly-firm-subscribed-offtake-capacity": "yearly-firm-subscribed-offtake-capacity"
+        },
+        "data_description": {
+          "hourly-available-conditional-injection-capacity": "Hourly conditional (secunda) injection capacity actually available (kW). Equals subscribed level when not curtailed, lower or zero during DSO-initiated curtailment.",
+          "hourly-available-conditional-offtake-capacity": "Hourly conditional (secunda) offtake capacity actually available (kW). Equals subscribed level when not curtailed, lower or zero during DSO-initiated curtailment.",
+          "quarter-hourly-day-ahead-price-se1": "Quarter-hourly day-ahead spot price for bidding zone SE1 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se2": "Quarter-hourly day-ahead spot price for bidding zone SE2 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se3": "Quarter-hourly day-ahead spot price for bidding zone SE3 (SEK/kWh).",
+          "quarter-hourly-day-ahead-price-se4": "Quarter-hourly day-ahead spot price for bidding zone SE4 (SEK/kWh).",
+          "quarter-hourly-energy-injection": "Quarter-hourly energy exported (injected) to the grid (kWh).",
+          "quarter-hourly-energy-offtake": "Quarter-hourly energy consumed (imported) from the grid (kWh).",
+          "yearly-conditional-subscribed-injection-capacity": "Yearly conditional (secunda) subscribed power injection capacity (kW).",
+          "yearly-conditional-subscribed-offtake-capacity": "Yearly conditional (secunda) subscribed power offtake capacity (kW).",
+          "yearly-firm-subscribed-injection-capacity": "Yearly firm (prima) subscribed power injection capacity (kW).",
+          "yearly-firm-subscribed-offtake-capacity": "Yearly firm (prima) subscribed power offtake capacity (kW)."
+        },
+        "description": "The selected tariff requires the following data sources. For more information, see the [Engrate documentation]({datasets_docs_url})."
       },
       "select_country": {
         "data": {

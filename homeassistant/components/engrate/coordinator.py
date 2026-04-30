@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
@@ -23,15 +24,16 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util, slugify
 
 from .api import EngrateApiAuthError, EngrateApiClient, EngrateApiConnectionError
-from .const import (
-    CONF_DATASETS,
-    CONF_TARIFF_ID,
-    DOMAIN,
-    ENERGY_COST_DATASET_IDS,
-    LOGGER,
-)
+from .const import CONF_DATASETS, CONF_TARIFF_ID, DOMAIN, LOGGER, PRICE_DATASET_IDS
 
 type EngrateConfigEntry = ConfigEntry[EngrateCoordinator]
+
+
+class _Sentinel:
+    """Sentinel type for unset cache values."""
+
+
+_UNSET = _Sentinel()
 
 
 @dataclass
@@ -64,6 +66,31 @@ def _year_start_local() -> datetime:
     """Return January 1st of the current year in the local timezone."""
     now = dt_util.now()
     return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+class DatasetResolution(StrEnum):
+    """Resolution of an Engrate dataset."""
+
+    QUARTER_HOURLY = "quarter_hourly"
+    HOURLY = "hourly"
+    YEARLY = "yearly"
+
+
+def _parse_resolution(dataset_name: str) -> DatasetResolution:
+    """Parse the resolution from a dataset ID prefix.
+
+    Dataset IDs follow the pattern: {resolution}-{description}
+    where resolution is 'quarter-hourly', 'hourly', or 'yearly'.
+
+    Raises UpdateFailed if the prefix is unrecognized.
+    """
+    if dataset_name.startswith("quarter-hourly-"):
+        return DatasetResolution.QUARTER_HOURLY
+    if dataset_name.startswith("hourly-"):
+        return DatasetResolution.HOURLY
+    if dataset_name.startswith("yearly-"):
+        return DatasetResolution.YEARLY
+    raise UpdateFailed(f"Unknown dataset resolution prefix for '{dataset_name}'")
 
 
 def _build_quarter_hourly_series(
@@ -107,6 +134,38 @@ def _build_quarter_hourly_series(
         current += timedelta(hours=1)
 
     return quarter_hourly
+
+
+def _build_hourly_series(
+    stats: list[dict[str, Any]],
+    period_start: datetime,
+    period_end: datetime,
+) -> list[dict[str, Any]]:
+    """Build an hourly time series from hourly recorder stats.
+
+    Uses the 'mean' value from each hour. Missing hours are filled with 0.
+    """
+    stats_by_hour: dict[float, float] = {}
+    for row in stats:
+        value = row.get("mean")
+        if value is not None:
+            stats_by_hour[row["start"]] = value
+
+    hourly: list[dict[str, Any]] = []
+    start_utc = dt_util.as_utc(period_start)
+    end_utc = dt_util.as_utc(period_end)
+    current = start_utc.replace(minute=0, second=0, microsecond=0)
+
+    while current < end_utc:
+        hourly.append(
+            {
+                "timestamp": current.isoformat(),
+                "value": stats_by_hour.get(current.timestamp(), 0.0),
+            }
+        )
+        current += timedelta(hours=1)
+
+    return hourly
 
 
 def _aggregate_hourly_costs(
@@ -175,6 +234,7 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         self.client = client
         tariff_slug = slugify(config_entry.title)
         self.statistic_id = f"{DOMAIN}:grid_cost_{tariff_slug}"
+        self._cached_system_operator: dict[str, Any] | None | _Sentinel = _UNSET
 
     async def _async_update_data(self) -> EngrateTariffData:
         """Fetch tariff data and calculate costs from recorder history."""
@@ -187,7 +247,10 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
         except EngrateApiConnectionError as err:
             raise UpdateFailed(f"Connection error: {err}") from err
 
-        system_operator = await self._resolve_system_operator(tariff)
+        # Resolve system operator once, then cache
+        if isinstance(self._cached_system_operator, _Sentinel):
+            self._cached_system_operator = await self._resolve_system_operator(tariff)
+        system_operator = self._cached_system_operator
 
         configured_datasets: dict[str, str] = self.config_entry.data.get(
             CONF_DATASETS, {}
@@ -280,15 +343,39 @@ class EngrateCoordinator(DataUpdateCoordinator[EngrateTariffData]):
 
         # Build time series for each configured dataset from recorder history
         for dataset_name, entity_id in configured_datasets.items():
-            is_price = dataset_name in ENERGY_COST_DATASET_IDS
-            stat_type = "mean" if is_price else "change"
-            rows = await self._query_stats(
-                entity_id, period_start, period_end, {stat_type}
-            )
+            resolution = _parse_resolution(dataset_name)
 
-            data_points = _build_quarter_hourly_series(
-                rows, stat_type, period_start, period_end, divide=not is_price
-            )
+            if resolution is DatasetResolution.YEARLY:
+                # Yearly datasets are static scalars — read current entity state
+                state = self.hass.states.get(entity_id)
+                value = (
+                    float(state.state)
+                    if state and state.state not in (None, "unknown", "unavailable")
+                    else 0.0
+                )
+                data_points = [
+                    {
+                        "timestamp": dt_util.as_utc(period_start).isoformat(),
+                        "value": value,
+                    }
+                ]
+            elif resolution is DatasetResolution.HOURLY:
+                # Hourly datasets (e.g. available capacity) — keep hourly
+                rows = await self._query_stats(
+                    entity_id, period_start, period_end, {"mean"}
+                )
+                data_points = _build_hourly_series(rows, period_start, period_end)
+            else:
+                # Quarter-hourly: expand hourly recorder stats to QH
+                is_price = dataset_name in PRICE_DATASET_IDS
+                stat_type = "mean" if is_price else "change"
+                rows = await self._query_stats(
+                    entity_id, period_start, period_end, {stat_type}
+                )
+                data_points = _build_quarter_hourly_series(
+                    rows, stat_type, period_start, period_end, divide=not is_price
+                )
+
             api_datasets.append({"name": dataset_name, "data": data_points})
 
         try:

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .conftest import MOCK_PARTY, MOCK_TARIFF
+from .conftest import MOCK_PARTY
 
 from tests.common import MockConfigEntry
 
@@ -26,7 +26,7 @@ async def test_grid_cost_sensor_state(
         await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    state = hass.states.get("sensor.sakringsabonnemang_20_a_year_to_date_grid_cost")
+    state = hass.states.get("sensor.fuse_subscription_20_a_year_to_date_grid_cost")
     assert state is not None
     assert float(state.state) == 0.54
 
@@ -47,10 +47,10 @@ async def test_grid_cost_sensor_attributes(
         await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    state = hass.states.get("sensor.sakringsabonnemang_20_a_year_to_date_grid_cost")
+    state = hass.states.get("sensor.fuse_subscription_20_a_year_to_date_grid_cost")
     assert state is not None
-    # Component cost from mock: Energiskatt = 0.54
-    assert state.attributes["Energiskatt"] == 0.54
+    # Component cost from mock: Energy tax = 0.54
+    assert state.attributes["Energy tax"] == 0.54
     assert "period_start" in state.attributes
     assert "period_end" in state.attributes
     assert "last_calculated" in state.attributes
@@ -78,7 +78,6 @@ async def test_grid_cost_sensor_device(
     )
     assert device is not None
     assert device.manufacturer == MOCK_PARTY["name"]
-    assert device.model == MOCK_TARIFF["name"]
 
 
 async def test_grid_cost_sensor_unique_id(
@@ -99,7 +98,7 @@ async def test_grid_cost_sensor_unique_id(
 
     entity_registry = er.async_get(hass)
     entry = entity_registry.async_get(
-        "sensor.sakringsabonnemang_20_a_year_to_date_grid_cost"
+        "sensor.fuse_subscription_20_a_year_to_date_grid_cost"
     )
     assert entry is not None
     assert entry.unique_id == "tariff-uuid-1_grid_cost"

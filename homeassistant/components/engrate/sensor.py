@@ -40,7 +40,6 @@ class EngrateGridCostSensor(CoordinatorEntity[EngrateCoordinator], SensorEntity)
             identifiers={(DOMAIN, tariff_id)},
             name=coordinator.data.tariff_name,
             manufacturer=coordinator.data.system_operator_name,
-            model=coordinator.data.tariff_name,
         )
 
     @property

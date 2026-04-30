@@ -35,14 +35,10 @@ from .const import (
     CONF_SYSTEM_OPERATOR_ID,
     CONF_TARIFF_ID,
     DOMAIN,
+    ENERGY_DATASET_IDS,
     LOGGER,
+    POWER_DATASET_IDS,
 )
-
-# Dataset IDs that map to energy sensors (kWh) — use device_class filter
-ENERGY_DATASET_IDS = {
-    "quarter-hourly-energy-offtake",
-    "quarter-hourly-energy-injection",
-}
 
 # Energy cost dataset IDs (should not appear in configure_datasets step)
 # These are auto-detected from the tariff definition
@@ -286,6 +282,15 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
                         ),
                     )
                 )
+            elif ds_id in POWER_DATASET_IDS:
+                selector = EntitySelector(
+                    EntitySelectorConfig(
+                        domain="sensor",
+                        filter=EntityFilterSelectorConfig(
+                            device_class=[SensorDeviceClass.POWER],
+                        ),
+                    )
+                )
             else:
                 selector = EntitySelector(EntitySelectorConfig(domain="sensor"))
             schema_dict[vol.Required(ds_id)] = selector
@@ -316,41 +321,55 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle reconfiguration to change the selected tariff."""
-        errors: dict[str, str] = {}
         reconfigure_entry = self._get_reconfigure_entry()
         api_key = reconfigure_entry.data[CONF_API_KEY]
 
         if user_input is not None:
             tariff_id = user_input[CONF_TARIFF_ID]
-            return self.async_update_reload_and_abort(
-                reconfigure_entry,
-                unique_id=tariff_id,
-                data={**reconfigure_entry.data, CONF_TARIFF_ID: tariff_id},
-            )
+            # Fetch full tariff to extract required datasets
+            session = async_get_clientsession(self.hass)
+            client = EngrateApiClient(session, api_key)
+            try:
+                tariff = await client.async_get_tariff(tariff_id)
+            except EngrateApiAuthError, EngrateApiConnectionError, EngrateApiError:
+                return self.async_abort(reason="cannot_connect")
+
+            self._tariff = tariff
+            all_datasets = _extract_required_datasets(tariff)
+            self._required_datasets = all_datasets
+
+            if not self._required_datasets:
+                return self.async_update_reload_and_abort(
+                    reconfigure_entry,
+                    unique_id=tariff_id,
+                    data={
+                        **reconfigure_entry.data,
+                        CONF_TARIFF_ID: tariff_id,
+                        CONF_DATASETS: {},
+                    },
+                )
+
+            return await self.async_step_reconfigure_datasets()
 
         try:
             session = async_get_clientsession(self.hass)
             client = EngrateApiClient(session, api_key)
             tariffs = await client.async_list_tariffs()
-        except EngrateApiAuthError:
-            errors["base"] = "invalid_auth"
-            tariffs = []
-        except EngrateApiConnectionError:
-            errors["base"] = "cannot_connect"
-            tariffs = []
+        except EngrateApiAuthError, EngrateApiConnectionError:
+            return self.async_abort(reason="cannot_connect")
         except Exception:  # noqa: BLE001
             LOGGER.exception("Unexpected exception")
-            errors["base"] = "unknown"
-            tariffs = []
+            return self.async_abort(reason="unknown")
 
-        if not tariffs and not errors:
+        if not tariffs:
             return self.async_abort(reason="no_tariffs")
 
-        if errors:
-            return self.async_abort(reason="cannot_connect")
+        self._tariffs = tariffs
 
         sorted_tariffs = sorted(tariffs, key=lambda t: _natural_sort_key(t["name"]))
-        tariff_options = {t["id"]: t["name"] for t in sorted_tariffs}
+        tariff_options = [
+            SelectOptionDict(value=t["id"], label=t["name"]) for t in sorted_tariffs
+        ]
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=vol.Schema(
@@ -358,8 +377,64 @@ class EngrateConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(
                         CONF_TARIFF_ID,
                         default=reconfigure_entry.data[CONF_TARIFF_ID],
-                    ): vol.In(tariff_options)
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=tariff_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
                 }
             ),
-            errors=errors,
+        )
+
+    async def async_step_reconfigure_datasets(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle dataset entity mapping during reconfiguration."""
+        assert self._tariff is not None
+        reconfigure_entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            return self.async_update_reload_and_abort(
+                reconfigure_entry,
+                unique_id=self._tariff["id"],
+                data={
+                    **reconfigure_entry.data,
+                    CONF_TARIFF_ID: self._tariff["id"],
+                    CONF_DATASETS: user_input,
+                },
+            )
+
+        # Build a schema with one entity selector per required dataset
+        schema_dict: dict[vol.Marker, Any] = {}
+        for ds in self._required_datasets:
+            ds_id = ds["id"]
+            if ds_id in ENERGY_DATASET_IDS:
+                selector = EntitySelector(
+                    EntitySelectorConfig(
+                        domain="sensor",
+                        filter=EntityFilterSelectorConfig(
+                            device_class=[SensorDeviceClass.ENERGY],
+                        ),
+                    )
+                )
+            elif ds_id in POWER_DATASET_IDS:
+                selector = EntitySelector(
+                    EntitySelectorConfig(
+                        domain="sensor",
+                        filter=EntityFilterSelectorConfig(
+                            device_class=[SensorDeviceClass.POWER],
+                        ),
+                    )
+                )
+            else:
+                selector = EntitySelector(EntitySelectorConfig(domain="sensor"))
+            schema_dict[vol.Required(ds_id)] = selector
+
+        return self.async_show_form(
+            step_id="reconfigure_datasets",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={
+                "datasets_docs_url": "https://docs.engrate.io/api-reference/cost-of-energy/models/dataset#registered-datasets"
+            },
         )

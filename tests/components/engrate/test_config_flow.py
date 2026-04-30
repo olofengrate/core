@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 from homeassistant import config_entries
+from homeassistant.components.engrate.api import EngrateApiConnectionError
 from homeassistant.components.engrate.const import (
     CONF_API_KEY,
     CONF_COUNTRY,
@@ -14,7 +15,13 @@ from homeassistant.components.engrate.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from .conftest import MOCK_SYSTEM_OPERATORS, MOCK_TARIFF_WITH_SPOT_PRICE, MOCK_TARIFFS
+from .conftest import (
+    MOCK_SYSTEM_OPERATORS,
+    MOCK_TARIFF,
+    MOCK_TARIFF_WITH_CAPACITY,
+    MOCK_TARIFF_WITH_SPOT_PRICE,
+    MOCK_TARIFFS,
+)
 
 from tests.common import MockConfigEntry
 
@@ -74,7 +81,7 @@ async def test_user_flow_full(hass: HomeAssistant, mock_setup_entry: AsyncMock) 
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Säkringsabonnemang - 20 A"
+    assert result["title"] == "Fuse subscription - 20 A"
     assert result["data"] == {
         CONF_API_KEY: "test-api-key",
         CONF_COUNTRY: "SE",
@@ -394,7 +401,7 @@ async def test_user_flow_with_spot_price_dataset(
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Spotpris tariff"
+    assert result["title"] == "Spot price tariff"
     assert result["data"][CONF_DATASETS] == {
         "quarter-hourly-energy-offtake": "sensor.energy_meter",
         "quarter-hourly-day-ahead-price-se3": "sensor.nordpool_se3",
@@ -404,12 +411,129 @@ async def test_user_flow_with_spot_price_dataset(
 async def test_reconfigure_flow(
     hass: HomeAssistant,
 ) -> None:
-    """Test the reconfigure flow to change tariff selection."""
+    """Test the reconfigure flow shows tariff selection then dataset mapping."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="tariff-uuid-1",
         data={
             CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {
+                "quarter-hourly-energy-offtake": "sensor.energy_meter",
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_tariffs = AsyncMock(return_value=MOCK_TARIFFS)
+        client.async_get_tariff = AsyncMock(return_value=MOCK_TARIFF)
+
+        result = await entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    # Select the same tariff — triggers dataset re-prompt
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_get_tariff = AsyncMock(return_value=MOCK_TARIFF)
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_TARIFF_ID: "tariff-uuid-1"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure_datasets"
+
+
+async def test_reconfigure_flow_with_new_tariff(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+) -> None:
+    """Test reconfigure flow changes tariff and re-prompts datasets."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
+            CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
+            CONF_TARIFF_ID: "tariff-uuid-1",
+            CONF_DATASETS: {
+                "quarter-hourly-energy-offtake": "sensor.energy_meter",
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+
+    all_tariffs = [*MOCK_TARIFFS, MOCK_TARIFF_WITH_CAPACITY]
+
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_list_tariffs = AsyncMock(return_value=all_tariffs)
+
+        result = await entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    # Select a different tariff with capacity datasets
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_get_tariff = AsyncMock(return_value=MOCK_TARIFF_WITH_CAPACITY)
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_TARIFF_ID: "tariff-uuid-4"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure_datasets"
+
+    # Submit dataset mapping
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "quarter-hourly-energy-offtake": "sensor.energy_meter",
+            "yearly-firm-subscribed-offtake-capacity": "sensor.subscribed",
+            "hourly-available-conditional-offtake-capacity": "sensor.capacity",
+        },
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_TARIFF_ID] == "tariff-uuid-4"
+    assert entry.data[CONF_DATASETS] == {
+        "quarter-hourly-energy-offtake": "sensor.energy_meter",
+        "yearly-firm-subscribed-offtake-capacity": "sensor.subscribed",
+        "hourly-available-conditional-offtake-capacity": "sensor.capacity",
+    }
+
+
+async def test_reconfigure_flow_connection_error(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+) -> None:
+    """Test reconfigure flow aborts on connection error when fetching tariff."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="tariff-uuid-1",
+        data={
+            CONF_API_KEY: "test-api-key",
+            CONF_COUNTRY: "SE",
             CONF_SYSTEM_OPERATOR_ID: "party-uuid-1",
             CONF_TARIFF_ID: "tariff-uuid-1",
             CONF_DATASETS: {},
@@ -426,7 +550,21 @@ async def test_reconfigure_flow(
         result = await entry.start_reconfigure_flow(hass)
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reconfigure"
+
+    # Selecting tariff fails to fetch full tariff
+    with patch(
+        "homeassistant.components.engrate.config_flow.EngrateApiClient",
+    ) as mock_client_class:
+        client = mock_client_class.return_value
+        client.async_get_tariff = AsyncMock(side_effect=EngrateApiConnectionError)
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_TARIFF_ID: "tariff-uuid-1"},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "cannot_connect"
 
 
 async def test_user_flow_prefills_from_existing_entry(

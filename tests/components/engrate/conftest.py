@@ -1,7 +1,7 @@
 """Common fixtures for the Engrate tests."""
 
 from collections.abc import Generator
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,7 +38,7 @@ MOCK_SYSTEM_OPERATORS = [
 MOCK_TARIFFS = [
     {
         "id": "tariff-uuid-1",
-        "name": "Säkringsabonnemang - 20 A",
+        "name": "Fuse subscription - 20 A",
         "summary": "Fuse-based tariff for 20A.",
         "eligibility": {
             "metering_grid_area_ids": ["mga-uuid-1"],
@@ -48,7 +48,7 @@ MOCK_TARIFFS = [
         "tariff_components": [
             {
                 "applicable_from": "2026-01-01T00:00:00+01:00",
-                "name": "Energiskatt",
+                "name": "Energy tax",
                 "datasets": [
                     {
                         "id": "quarter-hourly-energy-offtake",
@@ -68,7 +68,7 @@ MOCK_TARIFFS = [
     },
     {
         "id": "tariff-uuid-2",
-        "name": "Effektabonnemang - 63 A",
+        "name": "Power subscription - 63 A",
         "summary": "Power-based tariff.",
         "eligibility": {
             "metering_grid_area_ids": ["mga-uuid-2"],
@@ -78,7 +78,7 @@ MOCK_TARIFFS = [
         "tariff_components": [
             {
                 "applicable_from": "2026-01-01T00:00:00+01:00",
-                "name": "Energiskatt",
+                "name": "Energy tax",
                 "datasets": [
                     {
                         "id": "quarter-hourly-energy-offtake",
@@ -108,7 +108,7 @@ MOCK_TARIFF_WITH_INJECTION = MOCK_TARIFFS[1]
 
 MOCK_TARIFF_WITH_SPOT_PRICE = {
     "id": "tariff-uuid-3",
-    "name": "Spotpris tariff",
+    "name": "Spot price tariff",
     "summary": "Tariff that needs spot price.",
     "eligibility": {
         "metering_grid_area_ids": ["mga-uuid-1"],
@@ -118,7 +118,7 @@ MOCK_TARIFF_WITH_SPOT_PRICE = {
     "tariff_components": [
         {
             "applicable_from": "2026-01-01T00:00:00+01:00",
-            "name": "Energiskatt",
+            "name": "Energy tax",
             "datasets": [
                 {
                     "id": "quarter-hourly-energy-offtake",
@@ -158,7 +158,7 @@ MOCK_PARTY = MOCK_SYSTEM_OPERATORS[0]
 MOCK_CALCULATE_RESPONSE = [
     {
         "applicable_from": "2026-01-01T00:00:00+01:00",
-        "name": "Energiskatt",
+        "name": "Energy tax",
         "datasets": [
             {
                 "name": "cost",
@@ -186,7 +186,7 @@ def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         unique_id="tariff-uuid-1",
-        title="Säkringsabonnemang - 20 A",
+        title="Fuse subscription - 20 A",
         data={
             CONF_API_KEY: "test-api-key",
             CONF_COUNTRY: "SE",
@@ -260,11 +260,73 @@ def mock_recorder() -> Generator[MagicMock]:
 
 MOCK_HOURLY_STATS_ENERGY = [
     {
-        "start": datetime(2026, 1, 1, 0, 0).timestamp(),
+        "start": datetime(2026, 1, 1, 8, 0, tzinfo=UTC).timestamp(),
         "change": 10.0,
     },
     {
-        "start": datetime(2026, 1, 1, 1, 0).timestamp(),
+        "start": datetime(2026, 1, 1, 9, 0, tzinfo=UTC).timestamp(),
         "change": 10.0,
     },
 ]
+
+MOCK_HOURLY_STATS_PRICE = [
+    {
+        "start": datetime(2026, 1, 1, 8, 0, tzinfo=UTC).timestamp(),
+        "mean": 0.50,
+    },
+    {
+        "start": datetime(2026, 1, 1, 9, 0, tzinfo=UTC).timestamp(),
+        "mean": 0.55,
+    },
+]
+
+MOCK_HOURLY_STATS_CAPACITY = [
+    {
+        "start": datetime(2026, 1, 1, 8, 0, tzinfo=UTC).timestamp(),
+        "mean": 5.0,
+    },
+    {
+        "start": datetime(2026, 1, 1, 9, 0, tzinfo=UTC).timestamp(),
+        "mean": 6.0,
+    },
+]
+
+MOCK_TARIFF_WITH_CAPACITY = {
+    "id": "tariff-uuid-4",
+    "name": "Capacity tariff",
+    "summary": "Tariff with yearly and hourly capacity datasets.",
+    "eligibility": {
+        "metering_grid_area_ids": ["mga-uuid-1"],
+        "type": "system_operator",
+    },
+    "tariff_components": [
+        {
+            "applicable_from": "2026-01-01T00:00:00+01:00",
+            "name": "Capacity fee",
+            "datasets": [
+                {
+                    "id": "quarter-hourly-energy-offtake",
+                    "resolution": "quarter_hourly",
+                    "unit": "kWh",
+                },
+                {
+                    "id": "yearly-firm-subscribed-offtake-capacity",
+                    "resolution": "yearly",
+                    "unit": "kW",
+                },
+                {
+                    "id": "hourly-available-conditional-offtake-capacity",
+                    "resolution": "hourly",
+                    "unit": "kW",
+                },
+            ],
+            "functions": [],
+            "cost": {
+                "id": "cost",
+                "resolution": "quarter_hourly",
+                "unit": "SEK",
+            },
+            "timezone": "Europe/Stockholm",
+        }
+    ],
+}

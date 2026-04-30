@@ -34,5 +34,5 @@ async def test_diagnostics(
     assert result["config_entry"]["api_key"] == REDACTED
     assert result["config_entry"]["tariff_id"] == "tariff-uuid-1"
     assert result["tariff_raw"]["id"] == "tariff-uuid-1"
-    assert result["tariff_raw"]["name"] == "Säkringsabonnemang - 20 A"
+    assert result["tariff_raw"]["name"] == "Fuse subscription - 20 A"
     assert result["system_operator_name"] == "Ellevio AB"
